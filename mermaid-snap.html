@@ -236,6 +236,8 @@ main.collapsed .expand:hover { color: var(--accent); }
   const notifyParent = (type, extra) => { if (EMBED) window.parent.postMessage(Object.assign({ type }, extra || {}), location.origin); };
 
   function load() {
+    // コード欄は、最初は折りたたんでおく（開いた・閉じたは、単体で開いたときだけこの端末に覚える）
+    setCollapsed(true);
     if (EMBED) { src.value = ""; document.querySelector("header h1").hidden = true; return; }
     try {
       const s = JSON.parse(localStorage.getItem(KEY) || "{}");
@@ -244,7 +246,7 @@ main.collapsed .expand:hover { color: var(--accent); }
       if (s.scale) $("scale").value = s.scale;
       $("transparent").checked = !!s.transparent;
       if (s.smooth) $("smooth").value = s.smooth;
-      setCollapsed(!!s.collapsed);
+      setCollapsed(!s.codeOpen); // 前の版の collapsed は読まない（前の版は、開いたままでも保存していたため）
     } catch (e) { src.value = SAMPLE; }
   }
   function setCollapsed(on) {
@@ -256,7 +258,7 @@ main.collapsed .expand:hover { color: var(--accent); }
     try {
       localStorage.setItem(KEY, JSON.stringify({
         code: src.value, theme: $("theme").value, scale: $("scale").value, transparent: $("transparent").checked, smooth: $("smooth").value,
-        collapsed: document.querySelector("main").classList.contains("collapsed")
+        codeOpen: !document.querySelector("main").classList.contains("collapsed")
       }));
     } catch (e) {}
   }
