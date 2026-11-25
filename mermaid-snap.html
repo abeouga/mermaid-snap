@@ -1,0 +1,1763 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>[hidden]{display:none!important} body{margin:0}</style>
+</head>
+<body>
+<title>Mermaid Snap</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+JP:wght@400;500;700&display=swap">
+<style>
+/* Layout: 上部ツールバー＋左右2ペイン（左=コード、右=白い用紙のプレビュー）。狭い画面では上下に積む */
+:root {
+  --bg: #eef1f4;
+  --panel: #ffffff;
+  --fg: #1d2430;
+  --muted: #5d6878;
+  --line: #d5dbe3;
+  --accent: #1f6feb;
+  --accent-fg: #ffffff;
+  --editor-bg: #fbfcfd;
+  --err-bg: #fdecec;
+  --err-fg: #a4161a;
+  --ok: #2f8f5b;
+  --paper: #ffffff;
+  --font-ui: "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+  --font-code: "JetBrains Mono", ui-monospace, "SFMono-Regular", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161a20; --panel: #1f242c; --fg: #e5e9ef; --muted: #9aa5b4; --line: #333b47;
+    --accent: #4c8dff; --accent-fg: #0b1220; --editor-bg: #1a1f26; --err-bg: #3a1d20; --err-fg: #ffb3b3; --ok: #5fcf8e;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161a20; --panel: #1f242c; --fg: #e5e9ef; --muted: #9aa5b4; --line: #333b47;
+  --accent: #4c8dff; --accent-fg: #0b1220; --editor-bg: #1a1f26; --err-bg: #3a1d20; --err-fg: #ffb3b3; --ok: #5fcf8e;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-ui);
+  display: flex; flex-direction: column;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 12px;
+  box-sizing: border-box; gap: 12px;
+}
+* { box-sizing: border-box; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+h1 { font-size: 16px; font-weight: 700; margin: 0; letter-spacing: .02em; }
+h1 span { color: var(--muted); font-weight: 400; font-size: 13px; margin-left: 8px; }
+.tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-left: auto; }
+button, select {
+  font: inherit; font-size: 13px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--panel); color: var(--fg); padding: 6px 12px; cursor: pointer;
+}
+button:hover, select:hover { border-color: var(--accent); }
+button:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); font-weight: 500; }
+.sync { font-size: 12px; padding: 2px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.sync.live { color: var(--ok); border-color: var(--ok); }
+.sync.warn { color: var(--err-fg); border-color: var(--err-fg); }
+label.opt { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); gap: 12px; }
+main.collapsed { grid-template-columns: 40px minmax(0, 1fr); }
+.head-btns { display: flex; gap: 6px; }
+.expand { display: none; }
+main.collapsed .code-pane > :not(.expand) { display: none !important; }
+main.collapsed .expand {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; flex: 1;
+  border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 12px 0; font-size: 12px;
+}
+main.collapsed .expand span { writing-mode: vertical-rl; letter-spacing: .2em; }
+main.collapsed .expand:hover { color: var(--accent); }
+.pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.pane-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--muted); letter-spacing: .06em; gap: 8px; }
+#src {
+  flex: 1; min-height: 0; resize: none; border: 0; padding: 12px; margin: 0;
+  font-family: var(--font-code); font-size: 13px; line-height: 1.6;
+  background: var(--editor-bg); color: var(--fg); tab-size: 4; font-variant-ligatures: none; white-space: pre; overflow: auto;
+}
+#src:focus-visible { outline: none; }
+#err { display: none; margin: 0; padding: 8px 12px; background: var(--err-bg); color: var(--err-fg); font-family: var(--font-code); font-size: 12px; white-space: pre-wrap; max-height: 30%; overflow: auto; border-top: 1px solid var(--line); }
+#err.show { display: block; }
+.stage { flex: 1; min-height: 0; overflow: auto; background: var(--paper); display: flex; cursor: grab; touch-action: pinch-zoom; }
+.stage.dragging { cursor: grabbing; user-select: none; }
+.stage svg text { cursor: text; }
+#inlineEdit {
+  position: fixed; z-index: 15; font: 14px var(--font-ui); padding: 4px 8px;
+  border: 2px solid var(--accent); border-radius: 4px; background: #fff; color: #1d2430;
+  box-shadow: 0 4px 16px rgba(0,0,0,.18); outline: none; min-width: 140px;
+  line-height: 1.5; resize: none; overflow-y: auto; white-space: pre-wrap; word-break: break-all; box-sizing: border-box;
+}
+#out { margin: auto; padding: 24px; }
+#out svg { display: block; max-width: none !important; height: auto; }
+#out.fit svg { max-width: 100% !important; }
+/* 幅が足りないときは、ボタンの文字を折らずに、ボタンごと次の段へ送る */
+.pane-head { flex-wrap: wrap; }
+.pane-head > span { white-space: nowrap; }
+.zoom { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; align-items: center; }
+.zoom > *, .head-btns > *, .tools > *, label.opt { white-space: nowrap; flex: none; }
+.zoom button { padding: 2px 8px; font-size: 12px; }
+#status { font-size: 12px; color: var(--muted); min-height: 1em; }
+#status.ok { color: var(--ok); }
+#status.bad { color: var(--err-fg); }
+/* 画像モーダル（コピーも保存もできない環境用） */
+#modal { position: fixed; inset: 0; background: rgba(10,14,20,.6); display: flex; align-items: center; justify-content: center; padding: 24px; z-index: 20; }
+#modal .box { background: var(--panel); border-radius: 8px; padding: 16px; max-width: 100%; max-height: 100%; display: flex; flex-direction: column; gap: 12px; }
+#modal[hidden] { display: none; }
+#modal .box p { margin: 0; font-size: 13px; color: var(--muted); }
+#modal .imgwrap { overflow: auto; background: #fff; border: 1px solid var(--line); }
+#modal img { display: block; max-width: none; }
+@media (max-width: 760px) {
+  main { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(220px, 1fr) minmax(300px, 1.4fr); }
+  main.collapsed { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(300px, 1fr); }
+  main.collapsed .expand { flex-direction: row; justify-content: center; padding: 8px; }
+  main.collapsed .expand span { writing-mode: horizontal-tb; }
+  html, body { height: auto; min-height: 100%; }
+  .tools { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+/* 線を手で描くモード */
+.zoom .sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
+.zoom button:disabled { opacity: .45; cursor: default; border-color: var(--line); }
+.zoom button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.zoom select { padding: 2px 6px; font-size: 12px; }
+.stage.draw-mode, .stage.draw-mode svg text { cursor: crosshair; }
+.stage.draw-mode.near-edge, .stage.draw-mode.near-edge svg text { cursor: pointer; }
+#out svg path.snap-edge-hover { stroke: #e8590c !important; }
+#out svg path.snap-edge-dim { opacity: .25; }
+#out svg text.snap-selected, #out svg text.snap-selected tspan { fill: #e8590c !important; }
+/* 線のラベルと多重度はドラッグで動かせる */
+#out svg g.edgeLabel, #out svg g.edgeLabel text, #out svg g.edgeTerminals, #out svg g.edgeTerminals text { cursor: move; }
+.stage.moving, .stage.moving svg text { cursor: grabbing; }
+/* 表と枠もドラッグで動かせる。枠は右辺・下辺・右下の角で大きさを変える */
+#out svg g.node, #out svg g.node text { cursor: move; }
+.stage[data-handle="move"], .stage[data-handle="move"] svg text { cursor: move; }
+.stage[data-handle="w"] { cursor: ew-resize; }
+.stage[data-handle="h"] { cursor: ns-resize; }
+.stage[data-handle="both"] { cursor: nwse-resize; }
+</style>
+
+<header>
+  <h1>Mermaid Snap</h1>
+  <span id="sync" class="sync" title="" hidden></span>
+  <div class="tools">
+    <label class="opt" for="theme">テーマ
+      <select id="theme">
+        <option value="default">default</option>
+        <option value="neutral">neutral（白黒）</option>
+        <option value="forest">forest</option>
+        <option value="base">base</option>
+      </select>
+    </label>
+    <label class="opt" for="scale">画質
+      <select id="scale">
+        <option value="2">2倍</option>
+        <option value="3">3倍</option>
+        <option value="1">等倍</option>
+      </select>
+    </label>
+    <label class="opt" for="transparent"><input type="checkbox" id="transparent"> 背景透過</label>    <button class="primary" id="copyPng" type="button">PNGをコピー</button>
+    <button id="savePng" type="button">PNG保存</button>
+    <button id="saveSvg" type="button">SVG保存</button>
+  </div>
+</header>
+
+<main>
+  <section class="pane code-pane">
+    <button id="expand" class="expand" type="button" aria-label="コード欄を開く" title="コード欄を開く">▶<span>コード</span></button>
+    <div class="pane-head">
+      <span>MERMAID コード</span>
+      <div class="head-btns"><button id="clear" type="button">クリア</button><button id="collapse" type="button" aria-label="コード欄を折りたたむ" title="コード欄を折りたたむ">◀ 折りたたむ</button></div>
+    </div>
+    <textarea id="src" spellcheck="false" aria-label="Mermaidコード"></textarea>
+    <pre id="err"></pre>
+  </section>
+  <section class="pane">
+    <div class="pane-head">
+      <span id="status">プレビュー</span>
+      <div class="zoom">
+        <button id="drawMode" type="button" aria-pressed="false" title="線の上から描き始めて、ドラッグで経路を描きます。放すと両端の箱につながり、なめらかな曲線に整えます。線をダブルクリックすると自動の経路に戻ります。">線を描く</button>
+        <select id="smooth" aria-label="線の補正の強さ" title="線の補正の強さ">
+          <option value="1">補正 1（弱）</option>
+          <option value="2">補正 2</option>
+          <option value="3" selected>補正 3</option>
+          <option value="4">補正 4</option>
+          <option value="5">補正 5（最強）</option>
+        </select>
+        <button id="undoRoute" type="button" title="線の変更を 1 つ戻します（Ctrl+Z）" disabled>↶ 戻す</button>
+        <button id="redoRoute" type="button" title="戻した線の変更をやり直します（Ctrl+Y／Ctrl+Shift+Z）" disabled>↷ やり直す</button>
+        <button id="resetRoutes" type="button" title="この図で手で描いた線と、動かしたラベル・多重度を、すべて自動の位置に戻します（Ctrl+Z で取り消せます）">線と位置をすべて戻す</button>
+        <span class="sep"></span>
+        <button id="alignCenter" type="button" title="図の文字をクリックして選び（Ctrl+クリックでまとめて選べます）、押すと選んだ文字だけを中央にそろえます。もう一度押すと元のそろえに戻します" disabled>中央ぞろえ</button>
+        <span class="sep"></span>
+        <button id="zoomOut" type="button" aria-label="縮小">−</button>
+        <button id="zoomFit" type="button">全体表示</button>
+        <button id="zoomIn" type="button" aria-label="拡大">＋</button>
+      </div>
+    </div>
+    <div class="stage" id="stage" title="マウスホイールで拡大・縮小"><div id="out" class="fit"></div></div>
+  </section>
+</main>
+
+<div id="modal" hidden>
+  <div class="box">
+    <p>この環境では直接コピー・保存ができませんでした。画像を右クリック（長押し）して「画像をコピー」または「名前を付けて保存」してください。</p>
+    <div class="imgwrap"><img id="modalImg" alt="生成した図のPNG"></div>
+    <button id="modalClose" type="button">閉じる</button>
+  </div>
+</div>
+
+<script src="mermaid.min.js"></script>
+<script>
+(function () {
+  const SAMPLE = `flowchart LR
+    A[コードをコピー] --> B[左に貼り付け]
+    B --> C{図が出た？}
+    C -- はい --> D[PNGをコピー]
+    C -- いいえ --> E[エラーを見て修正]
+    E --> B
+    D --> F[資料に貼る]`;
+  const KEY = "mermaid-snap:v1";
+  const FONT = '"Hiragino Sans", "Yu Gothic UI", "Meiryo", "Noto Sans JP", sans-serif';
+
+  const $ = (id) => document.getElementById(id);
+  const src = $("src"), out = $("out"), err = $("err"), status = $("status");
+  let lastSvg = "", seq = 0, zoom = 0; // zoom 0 = fit
+  // workbench.html に埋め込まれたとき（?embed）。コードは親が渡すので、この端末の保存には書かない
+  const EMBED = new URLSearchParams(location.search).has("embed") && window.parent !== window;
+  const notifyParent = (type, extra) => { if (EMBED) window.parent.postMessage(Object.assign({ type }, extra || {}), location.origin); };
+
+  function load() {
+    if (EMBED) { src.value = ""; document.querySelector("header h1").hidden = true; return; }
+    try {
+      const s = JSON.parse(localStorage.getItem(KEY) || "{}");
+      src.value = s.code || SAMPLE;
+      if (s.theme) $("theme").value = s.theme;
+      if (s.scale) $("scale").value = s.scale;
+      $("transparent").checked = !!s.transparent;
+      if (s.smooth) $("smooth").value = s.smooth;
+      setCollapsed(!!s.collapsed);
+    } catch (e) { src.value = SAMPLE; }
+  }
+  function setCollapsed(on) {
+    document.querySelector("main").classList.toggle("collapsed", on);
+    $("expand").setAttribute("aria-expanded", String(!on));
+  }
+  function save() {
+    if (EMBED) return;
+    try {
+      localStorage.setItem(KEY, JSON.stringify({
+        code: src.value, theme: $("theme").value, scale: $("scale").value, transparent: $("transparent").checked, smooth: $("smooth").value,
+        collapsed: document.querySelector("main").classList.contains("collapsed")
+      }));
+    } catch (e) {}
+  }
+
+  // ```mermaid ... ``` で囲まれていたら中身だけ取り出す（Obsidian/VSCodeからのコピー対策）
+  function clean(text) {
+    let t = text.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").replace(/[\u200B\u00A0]/g, " ");
+    // 前後に説明文があっても ```mermaid ～ ``` の中身だけを取り出す（閉じがなくてもOK）
+    const m = t.match(/^[ \t]*(`{3,}|~{3,})[ \t]*mermaid\b[^\n]*\n([\s\S]*?)(?:\n[ \t]*\1[ \t]*(?=\n|(?![\s\S]))|(?![\s\S]))/im);
+    if (m) t = m[2];
+    // 残ったフェンス行（``` / ```mermaid / ~~~）は捨てる
+    t = t.split("\n").filter((l) => !/^\s*(`{3,}|~{3,})\s*(mermaid)?\s*$/i.test(l)).join("\n");
+    // 全体が同じ幅で字下げされていたら取り除く
+    const ind = t.split("\n").filter((l) => l.trim()).map((l) => l.match(/^[ \t]*/)[0].length);
+    const min = ind.length ? Math.min(...ind) : 0;
+    if (min) t = t.split("\n").map((l) => l.slice(min)).join("\n");
+    return t;
+  }
+
+  function init() {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: $("theme").value,
+      securityLevel: "strict",
+      fontFamily: FONT,
+      htmlLabels: false,
+      flowchart: { htmlLabels: false },
+      themeVariables: { background: "#ffffff", fontFamily: FONT }
+    });
+  }
+
+  function setStatus(text, cls) { status.textContent = text; status.className = cls || ""; }
+
+  async function render() {
+    const code = clean(src.value).trim();
+    save();
+    if (!code) { out.innerHTML = ""; lastSvg = ""; err.classList.remove("show"); setStatus("プレビュー"); return; }
+    const id = "m" + (++seq);
+    try {
+      await mermaid.parse(code);
+      const { svg } = await mermaid.render(id, code);
+      if (id !== "m" + seq) return;
+      out.innerHTML = svg;
+      addLabelBackgrounds(out.querySelector("svg"));
+      routes.prepare(out.querySelector("svg"), code);
+      lastSvg = svg;
+      applyZoom();
+      err.classList.remove("show");
+      setStatus("プレビュー");
+    } catch (e) {
+      document.getElementById("d" + id)?.remove();
+      err.textContent = String(e && (e.message || e.str) || e).trim();
+      err.classList.add("show");
+      setStatus(lastSvg ? "エラー（直前の図を表示中）" : "エラー", "bad");
+    }
+  }
+
+  // 矢印のラベルに背景を敷いて、線と文字が重ならないようにする
+  function addLabelBackgrounds(svgEl) {
+    if (!svgEl) return;
+    svgEl.querySelectorAll("g.edgeLabel g.label").forEach((g) => {
+      const text = g.querySelector("text");
+      if (!text || !text.textContent.trim() || g.querySelector("rect.snap-label-bg")) return;
+      const b = text.getBBox();
+      if (!b.width) return;
+      const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      r.setAttribute("class", "snap-label-bg");
+      r.setAttribute("x", b.x - 4); r.setAttribute("y", b.y - 2);
+      r.setAttribute("width", b.width + 8); r.setAttribute("height", b.height + 4);
+      r.setAttribute("rx", 3);
+      r.setAttribute("style", "fill:#ffffff;fill-opacity:0.9;opacity:1;stroke:none");
+      g.insertBefore(r, g.firstChild);
+    });
+  }
+
+  let t;
+  function scheduleRender() { clearTimeout(t); t = setTimeout(render, 250); }
+
+  function svgSize(svgEl) {
+    const vb = svgEl.viewBox && svgEl.viewBox.baseVal;
+    if (vb && vb.width) return { w: vb.width, h: vb.height };
+    const r = svgEl.getBoundingClientRect();
+    return { w: r.width, h: r.height };
+  }
+
+  function applyZoom() {
+    const svgEl = out.querySelector("svg");
+    if (!svgEl) return;
+    if (zoom === 0) { out.classList.add("fit"); svgEl.style.width = ""; return; }
+    out.classList.remove("fit");
+    svgEl.style.width = (svgSize(svgEl).w * zoom) + "px";
+  }
+
+  // 書き出し用のSVG文字列（サイズ明示＋背景）
+  function exportSvg() {
+    const svgEl = out.querySelector("svg");
+    if (!svgEl) return null;
+    const { w, h } = svgSize(svgEl);
+    const clone = svgEl.cloneNode(true);
+    // 線を描くモードの印（強調・描きかけの線）は書き出さない
+    clone.querySelectorAll(".snap-preview").forEach((el) => el.remove());
+    clone.querySelectorAll(".snap-edge-hover, .snap-edge-dim, .snap-selected").forEach((el) => el.classList.remove("snap-edge-hover", "snap-edge-dim", "snap-selected"));
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("width", w);
+    clone.setAttribute("height", h);
+    clone.removeAttribute("style");
+    if (!$("transparent").checked) {
+      const vb = svgEl.viewBox.baseVal;
+      const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      rect.setAttribute("x", vb ? vb.x : 0); rect.setAttribute("y", vb ? vb.y : 0);
+      rect.setAttribute("width", w); rect.setAttribute("height", h);
+      rect.setAttribute("fill", "#ffffff");
+      clone.insertBefore(rect, clone.firstChild);
+    }
+    return { text: new XMLSerializer().serializeToString(clone), w, h };
+  }
+
+  function pngBlob() {
+    return new Promise((resolve, reject) => {
+      const s = exportSvg();
+      if (!s) return reject(new Error("図がありません"));
+      const scale = Number($("scale").value) || 2;
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas");
+        c.width = Math.ceil(s.w * scale); c.height = Math.ceil(s.h * scale);
+        const ctx = c.getContext("2d");
+        if (!$("transparent").checked) { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); }
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        try {
+          c.toBlob((b) => b ? resolve(b) : reject(new Error("PNG変換に失敗しました")), "image/png");
+        } catch (e) { reject(e); }
+      };
+      img.onerror = () => reject(new Error("SVGの読み込みに失敗しました"));
+      img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(s.text);
+    });
+  }
+
+  function fileName(ext) {
+    const d = new Date(), p = (n) => String(n).padStart(2, "0");
+    return `mermaid-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.${ext}`;
+  }
+
+  function download(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+
+  function showModal(blob) {
+    const r = new FileReader();
+    r.onload = () => { $("modalImg").src = r.result; $("modal").hidden = false; };
+    r.readAsDataURL(blob);
+  }
+
+  function flash(text, cls) {
+    setStatus(text, cls);
+    setTimeout(() => { if (status.textContent === text) setStatus("プレビュー"); }, 2500);
+  }
+
+  $("copyPng").addEventListener("click", async () => {
+    if (!lastSvg) return flash("図がありません", "bad");
+    const blobP = pngBlob();
+    try {
+      if (!window.ClipboardItem || !navigator.clipboard?.write) throw new Error("no clipboard");
+      await navigator.clipboard.write([new ClipboardItem({ "image/png": blobP })]);
+      flash("PNGをクリップボードにコピーしました", "ok");
+    } catch (e) {
+      try { showModal(await blobP); } catch (e2) { flash(e2.message, "bad"); }
+    }
+  });
+
+  $("savePng").addEventListener("click", async () => {
+    if (!lastSvg) return flash("図がありません", "bad");
+    try {
+      const b = await pngBlob();
+      download(b, fileName("png"));
+      flash("PNGを保存しました（保存されない場合は「PNGをコピー」を使ってください）", "ok");
+    } catch (e) { flash(e.message, "bad"); }
+  });
+
+  $("saveSvg").addEventListener("click", () => {
+    const s = exportSvg();
+    if (!s) return flash("図がありません", "bad");
+    download(new Blob([s.text], { type: "image/svg+xml" }), fileName("svg"));
+    flash("SVGを保存しました", "ok");
+  });
+
+  $("collapse").addEventListener("click", () => { setCollapsed(true); save(); $("expand").focus(); });
+  $("expand").addEventListener("click", () => { setCollapsed(false); save(); src.focus(); });
+  $("clear").addEventListener("click", () => { src.value = ""; render(); shareChanged(); src.focus(); });
+  $("modalClose").addEventListener("click", () => { $("modal").hidden = true; });
+  $("modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("modal").hidden = true; });
+
+  // 指定した画面上の点（cx, cy）を固定したまま倍率を変える
+  const stage = $("stage");
+  function zoomAt(factor, cx, cy) {
+    const svgEl = out.querySelector("svg");
+    if (!svgEl) return;
+    const nat = svgSize(svgEl).w;
+    const before = svgEl.getBoundingClientRect();
+    const cur = zoom || (before.width / nat);
+    const next = Math.min(Math.max(cur * factor, 0.1), 8);
+    if (next === cur) return;
+    if (cx === undefined) { const r = stage.getBoundingClientRect(); cx = r.left + r.width / 2; cy = r.top + r.height / 2; }
+    const sx = cx - before.left, sy = cy - before.top, ratio = next / cur;
+    zoom = next;
+    applyZoom();
+    const after = svgEl.getBoundingClientRect();
+    stage.scrollLeft += after.left + sx * ratio - cx;
+    stage.scrollTop += after.top + sy * ratio - cy;
+  }
+  stage.addEventListener("wheel", (e) => {
+    if (!out.querySelector("svg")) return;
+    e.preventDefault();
+    const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
+    zoomAt(Math.exp(-dy * 0.0015), e.clientX, e.clientY);
+  }, { passive: false });
+  // ドラッグで図を動かす
+  let drag = null;
+  stage.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY, sl: stage.scrollLeft, st: stage.scrollTop };
+    stage.setPointerCapture(e.pointerId);
+    stage.classList.add("dragging");
+  });
+  stage.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    stage.scrollLeft = drag.sl - (e.clientX - drag.x);
+    stage.scrollTop = drag.st - (e.clientY - drag.y);
+  });
+  function endDrag(e) {
+    if (!drag || e.pointerId !== drag.id) return;
+    drag = null;
+    stage.classList.remove("dragging");
+  }
+  stage.addEventListener("pointerup", endDrag);
+  stage.addEventListener("pointercancel", endDrag);
+  // 図の文字をダブルクリックで編集 → コードに反映
+  const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  function labelLines(textEl) {
+    const outer = textEl.querySelectorAll("tspan.text-outer-tspan");
+    const lines = outer.length ? [...outer].map((t) => t.textContent) : [textEl.textContent];
+    return lines.map((l) => l.trim()).filter(Boolean);
+  }
+  function labelRegex(lines) {
+    const body = lines.map((l) => l.split(/\s+/).map(reEsc).join("\\s+")).join("(?:\\s*<br\\s*/?>\\s*|\\s*)");
+    return new RegExp(body, "g");
+  }
+  function allMatches(re, code) {
+    const res = [];
+    let m;
+    while ((m = re.exec(code))) {
+      if (!m[0].length) { re.lastIndex++; continue; }
+      res.push({ start: m.index, end: m.index + m[0].length });
+    }
+    return res;
+  }
+  // 図の中の文字（text要素）から、コード上の書き換え範囲を探す
+  // <br> で改行すると行ごとに別の text 要素になる図（シーケンス図など）があるので、
+  // 同じ場所に縦に並んだ兄弟の text をまとめて1つのラベルとして扱う
+  function textGroup(textEl) {
+    const same = (a, b) => a && a.tagName === "text" && b.getAttribute("class") === a.getAttribute("class") &&
+      b.getAttribute("x") === a.getAttribute("x") && labelLines(a).length;
+    const near = (a, b) => Math.abs(parseFloat(a.getAttribute("y") || 0) - parseFloat(b.getAttribute("y") || 0)) <= 40;
+    const group = [textEl];
+    for (let e = textEl.previousElementSibling; same(e, group[0]) && near(e, group[0]); e = e.previousElementSibling) group.unshift(e);
+    for (let e = textEl.nextElementSibling; same(e, group[group.length - 1]) && near(e, group[group.length - 1]); e = e.nextElementSibling) group.push(e);
+    return group;
+  }
+  function groupLines(group) { return group.flatMap(labelLines); }
+  function groupRect(group) {
+    const rs = group.map((t) => t.getBoundingClientRect());
+    const left = Math.min(...rs.map((r) => r.left)), top = Math.min(...rs.map((r) => r.top));
+    const right = Math.max(...rs.map((r) => r.right)), bottom = Math.max(...rs.map((r) => r.bottom));
+    return { left, top, width: right - left, height: bottom - top };
+  }
+  function findTarget(textEl) {
+    const tg = textGroup(textEl);
+    const lines = groupLines(tg);
+    if (!lines.length) return null;
+    const code = src.value;
+    // シーケンス図の登場人物・クラス名は「名前」なので、同じ単語を全部置き換える
+    const isName = textEl.classList.contains("actor") || !!textEl.closest("g.label-group");
+    if (isName && lines.length === 1) {
+      const w = reEsc(lines[0]);
+      const ranges = allMatches(new RegExp("(?<![\\w\\u3040-\\u9fff])" + w + "(?![\\w\\u3040-\\u9fff])", "g"), code);
+      return ranges.length ? { ranges, original: lines[0] } : null;
+    }
+    const matches = allMatches(labelRegex(lines), code);
+    if (!matches.length) return null;
+    let pick = null;
+    // フローチャートのノードやサブグラフは、IDの直後にあるラベルを優先
+    const group = textEl.closest("g.node, g.cluster");
+    if (group && group.id && matches.length > 1) {
+      let id = group.id;
+      const fm = id.match(/^flowchart-(.+)-\d+$/);
+      if (fm) id = fm[1];
+      const idRe = new RegExp("(?:^|[^\\w-])" + reEsc(id) + "\\s*[\\[\\(\\{>/\\\\]*[\"`]?\\s*$");
+      pick = matches.find((r) => idRe.test(code.slice(code.lastIndexOf("\n", r.start - 1) + 1, r.start)));
+    }
+    if (!pick) {
+      // 同じ文字が複数あるときは、図の中で何番目かに合わせる
+      const key = lines.join("\n");
+      const seen = new Set(), same = [];
+      for (const t of out.querySelectorAll("svg text")) {
+        if (seen.has(t)) continue;
+        const g = textGroup(t);
+        g.forEach((x) => seen.add(x));
+        if (groupLines(g).join("\n") === key) same.push(g[0]);
+      }
+      const k = Math.max(0, same.indexOf(tg[0]));
+      pick = matches[Math.min(k, matches.length - 1)];
+    }
+    return { ranges: [pick], original: code.slice(pick.start, pick.end) };
+  }
+  function replaceRanges(ranges, text) {
+    const sorted = [...ranges].sort((a, b) => b.start - a.start);
+    const top = stage.scrollTop, left = stage.scrollLeft, editorTop = src.scrollTop, editorLeft = src.scrollLeft;
+    src.focus({ preventScroll: true });
+    let ok = true;
+    for (const r of sorted) {
+      src.setSelectionRange(r.start, r.end);
+      try { ok = document.execCommand("insertText", false, text) && ok; } catch (e) { ok = false; }
+      if (!ok) break;
+    }
+    if (!ok) {
+      let v = src.value;
+      for (const r of sorted) v = v.slice(0, r.start) + text + v.slice(r.end);
+      src.value = v;
+    }
+    src.blur();
+    shareChanged();
+    notifyParent("snap:dirty");
+    clearTimeout(t);
+    src.scrollTop = editorTop;
+    src.scrollLeft = editorLeft;
+    return render().then(() => { stage.scrollTop = top; stage.scrollLeft = left; });
+  }
+  // 図の文字を Backspace／Delete で消す前のコード（Ctrl+Z で戻す）
+  const codeHistory = [];
+  function undoCode() {
+    const last = codeHistory[codeHistory.length - 1];
+    // 消した後にコードを打ち直していたら、戻すと打った分が消えるので戻さない
+    if (!last || last.after !== src.value) { codeHistory.length = 0; return flash("戻せる文字の削除はありません"); }
+    codeHistory.pop();
+    src.value = last.before;
+    shareChanged();
+    notifyParent("snap:dirty");
+    clearTimeout(t);
+    render().then(() => flash("消した文字を戻しました", "ok"));
+  }
+  let editing = null;
+  function openEditor(textEl, target) {
+    closeEditor(false);
+    const rect = groupRect(textGroup(textEl));
+    const input = document.createElement("textarea");
+    input.id = "inlineEdit";
+    input.rows = 1;
+    input.spellcheck = false;
+    // コードの <br> は入力欄では改行として見せる
+    input.value = target.original.replace(/[ \t]*<br\s*\/?>[ \t]*/gi, "\n");
+    input.dataset.initial = input.value;
+    input.setAttribute("aria-label", "図の文字を編集");
+    // 文字の長さに合わせて幅を決め、画面に収まらない分は折り返して縦に伸ばす
+    const ctx = document.createElement("canvas").getContext("2d");
+    ctx.font = getComputedStyle(document.body).fontFamily ? "14px " + getComputedStyle(document.body).fontFamily : "14px sans-serif";
+    const textW = Math.max(...input.value.split("\n").map((l) => ctx.measureText(l).width)) + 36;
+    const maxW = Math.min(560, window.innerWidth - 32);
+    const w = Math.min(Math.max(textW, rect.width + 40, 200), maxW);
+    input.style.width = w + "px";
+    input.style.left = Math.max(16, Math.min(rect.left + rect.width / 2 - w / 2, window.innerWidth - w - 16)) + "px";
+    document.body.appendChild(input);
+    const fit = () => {
+      input.style.height = "auto";
+      const h = Math.min(input.scrollHeight + 4, window.innerHeight * 0.5);
+      input.style.height = h + "px";
+      input.style.top = Math.max(8, Math.min(rect.top + rect.height / 2 - 18, window.innerHeight - h - 8)) + "px";
+    };
+    fit();
+    editing = { input, target };
+    input.focus();
+    input.select();
+    input.addEventListener("input", fit);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.isComposing && (e.shiftKey || e.altKey)) {
+        // Shift+Enter / Alt+Enter で改行（コードには <br> として入る）
+        e.preventDefault();
+        input.setRangeText("\n", input.selectionStart, input.selectionEnd, "end");
+        fit();
+      }
+      else if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); closeEditor(true); }
+      else if (e.key === "Escape") { e.preventDefault(); closeEditor(false); }
+    });
+    input.addEventListener("blur", () => closeEditor(true));
+  }
+  // 入力欄の外をクリック・ホイールしたら、その時点で保存して編集を終える
+  document.addEventListener("pointerdown", (e) => {
+    if (editing && e.target !== editing.input) closeEditor(true);
+  }, true);
+  document.addEventListener("wheel", (e) => {
+    if (editing && e.target !== editing.input) closeEditor(true);
+  }, { capture: true, passive: true });
+  function closeEditor(commit) {
+    if (!editing) return;
+    const { input, target } = editing;
+    editing = null;
+    input.remove();
+    const value = input.value.replace(/\n/g, "<br>");
+    if (commit && value !== target.original && input.value !== input.dataset.initial) {
+      const n = target.ranges.length, orig = target.original;
+      replaceRanges(target.ranges, value).then(() => flash(n > 1 ? `「${orig}」を${n}か所変更しました` : "コードに反映しました", "ok"));
+    }
+  }
+  stage.addEventListener("dblclick", (e) => {
+    const hit = document.elementFromPoint(e.clientX, e.clientY);
+    if (!hit || !out.contains(hit)) return;
+    let textEl = hit.closest("text");
+    if (!textEl || !labelLines(textEl).length) {
+      // 文字ではなく図形をダブルクリックしたときは、その図形の文字を使う
+      const g = hit.closest("g.node, g.cluster, g.actor, g.note, g.edgeLabel");
+      textEl = g && [...g.querySelectorAll("text")].find((t) => labelLines(t).length);
+      if (!textEl && hit.closest("rect.actor")) {
+        const r = hit.getBoundingClientRect();
+        textEl = [...out.querySelectorAll("text.actor")].find((t) => {
+          const b = t.getBoundingClientRect();
+          return b.left >= r.left - 1 && b.right <= r.right + 1 && b.top >= r.top - 1 && b.bottom <= r.bottom + 1;
+        });
+      }
+    }
+    if (!textEl) return;
+    e.preventDefault();
+    const target = findTarget(textEl);
+    if (!target) return flash("この文字はコードの中で見つかりませんでした", "bad");
+    openEditor(textEl, target);
+  });
+  // ---- 線を手で描く ----
+  // 「線を描く」を押してから線の上でドラッグすると、ドラッグの間その経路が描かれる。
+  // 放すと、元の線の両端の箱の枠につなぎ、手ぶれを除いてなめらかな曲線に整える（ペイントソフトの線の補正のように）。
+  // 描いた経路は、同じ図（コードとテーマが同じ）を開いたときに戻せるよう、この端末にだけ保存する。
+  // 書き出し（PNG・SVG）は画面の SVG を写すので、描いた経路のまま出る。
+  const ROUTES_KEY = "mermaid-snap:routes:v1";
+  const SVGNS = "http://www.w3.org/2000/svg";
+  // 補正の強さ：描いている間の追従の遅さ（0〜1。小さいほど強く補正）、ならす点の数、点を間引く距離（画面の px）
+  //   max：曲線の途中の点の数の上限。超えるときは間引きを強めて、大きくゆるやかな曲線にする
+  const SMOOTH = {
+    1: { lazy: 0.6, avg: 1, eps: 1.5, max: Infinity },
+    2: { lazy: 0.35, avg: 2, eps: 3, max: Infinity },
+    3: { lazy: 0.2, avg: 4, eps: 6, max: 12 },
+    4: { lazy: 0.1, avg: 8, eps: 12, max: 6 },
+    5: { lazy: 0.05, avg: 14, eps: 22, max: 3 },
+  };
+  const NEAR_PX = 10;
+
+  const routes = (() => {
+    let diagramKey = "", svgEl = null, mode = false, stroke = null, hoverEdge = null, hoverRaf = 0;
+    // 変更の履歴。1 回の操作 = [{ kind, key, from, to }]
+    //   kind "route"：線の d の文字列（元の経路は null）
+    //   kind "align"：文字を中央にそろえているか（true / false）
+    let undoStack = [], redoStack = [];
+    // 選んでいる文字（text 要素）
+    let selected = [];
+
+    function hash(s) {
+      let h = 0x811c9dc5;
+      for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+      return (h >>> 0).toString(36);
+    }
+    function readAll() { try { return JSON.parse(localStorage.getItem(ROUTES_KEY) || "{}"); } catch (e) { return {}; } }
+    function writeAll(all) { try { localStorage.setItem(ROUTES_KEY, JSON.stringify(all)); } catch (e) {} }
+    const edges = () => svgEl ? [...svgEl.querySelectorAll("g.edgePaths path")].filter((p) => !p.classList.contains("snap-preview")) : [];
+    // 描き直すたびに変わる図の番号（m1- など）を外した、線の名前
+    const edgeKey = (p, i) => (p.id || "").replace(/^m\d+-/, "") || "edge-" + i;
+
+    // 描き終えた図ごとに、元の経路を覚え、保存してある経路を戻す
+    function prepare(el, code) {
+      svgEl = el; stroke = null; hoverEdge = null; selected = [];
+      if (!el) { updateButtons(); return; }
+      const nextKey = hash($("theme").value + "\n" + code);
+      // 別の図になったら履歴は使えないので消す（同じ図の描き直しなら残す）
+      if (nextKey !== diagramKey) { undoStack = []; redoStack = []; }
+      diagramKey = nextKey;
+      const saved = readAll()[diagramKey] || {};
+      edges().forEach((p, i) => {
+        p.dataset.snapOrig = p.getAttribute("d") || "";
+        p.dataset.snapKey = edgeKey(p, i);
+      });
+      // 表・枠の元の位置と、線・ラベル・多重度がどの表につながっているかを、動かす前（Mermaid が描いたまま）の形で覚える
+      layout.remember();
+      edges().forEach((p) => { if (saved[p.dataset.snapKey]) p.setAttribute("d", saved[p.dataset.snapKey]); });
+      Object.keys(saved).filter((k) => /^(node|cluster):/.test(k)).forEach((k) => layout.set(k, saved[k]));
+      // 文字には、描くたびに同じになる順番で名前を付ける（同じコードなら同じ図になるため）
+      el.querySelectorAll("text").forEach((t, i) => {
+        t.dataset.snapKey = "text:" + i;
+        if (saved[t.dataset.snapKey]) setAlign(t.dataset.snapKey, true);
+      });
+      // 線のラベルと多重度：元の位置を覚え、保存してある位置に動かす
+      movables().forEach((g) => {
+        const m = (g.getAttribute("transform") || "").match(/translate\(\s*(-?[\d.e+-]+)[\s,]+(-?[\d.e+-]+)\s*\)/);
+        g.dataset.snapX0 = m ? m[1] : "0";
+        g.dataset.snapY0 = m ? m[2] : "0";
+        if (saved[g.dataset.snapKey]) setMove(g.dataset.snapKey, saved[g.dataset.snapKey]);
+      });
+      if (Object.keys(saved).length) fitViewBox();
+      updateButtons();
+    }
+
+    // 線の d を変える。元の経路に戻すときは null
+    function setD(key, d) {
+      const p = edges().find((x) => x.dataset.snapKey === key);
+      if (!p) return;
+      p.setAttribute("d", d === null ? p.dataset.snapOrig : d);
+      storeKey(key, d);
+    }
+    const current = (p) => (p.getAttribute("d") === p.dataset.snapOrig ? null : p.getAttribute("d"));
+
+    // 文字を、入っている箱（なければ namespace の囲み）の中央にそろえる。on = false で元のそろえに戻す
+    function setAlign(key, on) {
+      const t = svgEl && svgEl.querySelector(`text[data-snap-key="${key}"]`);
+      if (!t) return;
+      const outer = [...t.querySelectorAll("tspan.text-outer-tspan")];
+      const targets = outer.length ? outer : [t];
+      if (t.dataset.snapAnchor0 === undefined) {
+        t.dataset.snapAnchor0 = t.getAttribute("text-anchor") || "";
+        targets.forEach((x) => { x.dataset.snapX0 = x.getAttribute("x") || ""; });
+      }
+      if (!on) {
+        if (t.dataset.snapAnchor0) t.setAttribute("text-anchor", t.dataset.snapAnchor0); else t.removeAttribute("text-anchor");
+        targets.forEach((x) => { if (x.dataset.snapX0) x.setAttribute("x", x.dataset.snapX0); else x.removeAttribute("x"); });
+        delete t.dataset.snapCentered;
+      } else {
+        const box = t.closest("g.node") || t.closest("g.cluster") || t.parentNode;
+        const r = box.getBoundingClientRect();
+        const cx = new DOMPoint((r.left + r.right) / 2, r.top).matrixTransform(t.getScreenCTM().inverse()).x;
+        t.setAttribute("text-anchor", "middle");
+        targets.forEach((x) => x.setAttribute("x", String(Math.round(cx * 100) / 100)));
+        t.dataset.snapCentered = "1";
+      }
+      storeKey(key, on ? true : null);
+    }
+    const isCentered = (t) => t.dataset.snapCentered === "1";
+
+    // 線のラベル（g.edgeLabel）と多重度（g.edgeTerminals）。図の中の順番で名前を付ける
+    function movables() {
+      if (!svgEl) return [];
+      const list = [];
+      svgEl.querySelectorAll("g.edgeLabel").forEach((g, i) => { g.dataset.snapKey = "label:" + i; list.push(g); });
+      svgEl.querySelectorAll("g.edgeTerminals").forEach((g, i) => { g.dataset.snapKey = "term:" + i; list.push(g); });
+      return list;
+    }
+    // 元の位置からのずれ "dx,dy" で動かす。元の位置に戻すときは null
+    function setMove(key, value) {
+      const g = svgEl && svgEl.querySelector(`g[data-snap-key="${key}"]`);
+      if (!g) return;
+      const [dx, dy] = value ? value.split(",").map(Number) : [0, 0];
+      g.setAttribute("transform", `translate(${Number(g.dataset.snapX0) + dx}, ${Number(g.dataset.snapY0) + dy})`);
+      if (value) g.dataset.snapMoved = value; else delete g.dataset.snapMoved;
+      storeKey(key, value);
+    }
+    const moved = (g) => g.dataset.snapMoved || null;
+    // 押した所のラベル・多重度。多重度の文字は小さいので、周り 6px までならつかめるようにする
+    function movableAt(e) {
+      if (!svgEl) return null;
+      const direct = e.target.closest && e.target.closest("g.edgeLabel, g.edgeTerminals");
+      if (direct && svgEl.contains(direct) && direct.dataset.snapKey) return direct;
+      const pad = 6;
+      return [...svgEl.querySelectorAll("g.edgeLabel[data-snap-key], g.edgeTerminals[data-snap-key]")].find((g) => {
+        const r = g.getBoundingClientRect();
+        return r.width && e.clientX >= r.left - pad && e.clientX <= r.right + pad && e.clientY >= r.top - pad && e.clientY <= r.bottom + pad;
+      }) || null;
+    }
+
+    function setState(c, value) {
+      if (c.kind === "align") setAlign(c.key, value);
+      else if (c.kind === "move") setMove(c.key, value);
+      else if (c.kind === "node" || c.kind === "cluster") layout.set(c.key, value);
+      else setD(c.key, value);
+    }
+
+    // ---- 表（クラスの箱 g.node）と枠（namespace の g.cluster）を動かす ----
+    // 表を動かすと、つながっている線は端を表と一緒に動かして形を保ち、ラベルは線の両端の動きの平均、多重度は表と同じだけ動く。
+    // 枠を動かすと、中の表も一緒に動く。枠は右辺・下辺・右下の角をドラッグすると大きさを変えられる。
+    const layout = (() => {
+      const num = (s) => (s ? s.split(",").map(Number) : null);
+      const fmt = (a) => (a.every((n) => Math.abs(n) < 0.005) ? null : a.map((n) => Math.round(n * 100) / 100).join(","));
+      const nodes = () => (svgEl ? [...svgEl.querySelectorAll("g.node")] : []);
+      const clusters = () => (svgEl ? [...svgEl.querySelectorAll("g.cluster")] : []);
+      const byKey = (key) => svgEl && svgEl.querySelector(`[data-snap-key="${key}"]`);
+      const center = (r) => ({ x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 });
+      const rectDistC = (r, pt) => Math.hypot(Math.max(r.left - pt.x, 0, pt.x - r.right), Math.max(r.top - pt.y, 0, pt.y - r.bottom));
+
+      function remember() {
+        nodes().forEach((g, i) => {
+          g.dataset.snapKey = "node:" + i;
+          const m = (g.getAttribute("transform") || "").match(/translate\(\s*(-?[\d.e+-]+)[\s,]+(-?[\d.e+-]+)\s*\)/);
+          g.dataset.snapX0 = m ? m[1] : "0"; g.dataset.snapY0 = m ? m[2] : "0";
+        });
+        clusters().forEach((g, i) => {
+          g.dataset.snapKey = "cluster:" + i;
+          const r = g.querySelector(":scope > rect");
+          if (r) ["x", "y", "width", "height"].forEach((a) => { r.dataset["snap0" + a] = r.getAttribute(a) || "0"; });
+          const l = g.querySelector(":scope > g.cluster-label");
+          const m = l && (l.getAttribute("transform") || "").match(/translate\(\s*(-?[\d.e+-]+)[\s,]+(-?[\d.e+-]+)\s*\)/);
+          if (l) { l.dataset.snapX0 = m ? m[1] : "0"; l.dataset.snapY0 = m ? m[2] : "0"; }
+        });
+        // 線の両端がどの表につながっているか（元の線の始点・終点に一番近い表）
+        const nodeRects = nodes().map((g) => ({ key: g.dataset.snapKey, r: g.getBoundingClientRect() }));
+        const nearestNode = (pt) => nodeRects.reduce((b, n) => (!b || rectDistC(n.r, pt) < rectDistC(b.r, pt) ? n : b), null);
+        const ends = [];
+        edges().forEach((p) => {
+          const len = p.getTotalLength();
+          const a = toClient(p, p.getPointAtLength(0)), b = toClient(p, p.getPointAtLength(len));
+          p.dataset.snapSrc = nearestNode(a)?.key || "";
+          p.dataset.snapDst = nearestNode(b)?.key || "";
+          ends.push({ pt: a, node: p.dataset.snapSrc }, { pt: b, node: p.dataset.snapDst });
+          p._snapMid = toClient(p, p.getPointAtLength(len / 2));
+        });
+        // ラベルは一番近い線に、多重度は一番近い線の端の表に付ける
+        movables();
+        svgEl.querySelectorAll("g.edgeLabel").forEach((g) => {
+          const c = center(g.getBoundingClientRect());
+          let best = null, bd = Infinity;
+          edges().forEach((p) => { const d = Math.hypot(p._snapMid.x - c.x, p._snapMid.y - c.y); if (d < bd) { bd = d; best = p; } });
+          g.dataset.snapEdge = best ? best.dataset.snapKey : "";
+        });
+        svgEl.querySelectorAll("g.edgeTerminals").forEach((g) => {
+          const c = center(g.getBoundingClientRect());
+          const e = ends.reduce((b, x) => (!b || dist(x.pt, c) < dist(b.pt, c) ? x : b), null);
+          g.dataset.snapNode = e ? e.node : "";
+        });
+      }
+
+      // node: "dx,dy"、cluster: "dx,dy,dw,dh"。元に戻すときは null
+      function set(key, value) {
+        const g = byKey(key);
+        if (!g) return;
+        if (key.startsWith("node:")) {
+          const [dx, dy] = num(value) || [0, 0];
+          g.setAttribute("transform", `translate(${Number(g.dataset.snapX0) + dx}, ${Number(g.dataset.snapY0) + dy})`);
+        } else {
+          const [dx, dy, dw, dh] = num(value) || [0, 0, 0, 0];
+          const r = g.querySelector(":scope > rect");
+          if (r) {
+            r.setAttribute("x", Number(r.dataset.snap0x) + dx);
+            r.setAttribute("y", Number(r.dataset.snap0y) + dy);
+            r.setAttribute("width", Math.max(20, Number(r.dataset.snap0width) + dw));
+            r.setAttribute("height", Math.max(20, Number(r.dataset.snap0height) + dh));
+          }
+          const l = g.querySelector(":scope > g.cluster-label");
+          if (l) l.setAttribute("transform", `translate(${Number(l.dataset.snapX0) + dx + dw / 2}, ${Number(l.dataset.snapY0) + dy})`);
+        }
+        if (value) g.dataset.snapLayout = value; else delete g.dataset.snapLayout;
+        storeKey(key, value);
+      }
+      const get = (g) => g.dataset.snapLayout || null;
+
+      // 線の形を、始点側を dA、終点側を dB だけ動かして保つ（途中は長さの割合でなめらかに混ぜる）
+      function samples(p, d) {
+        const tmp = document.createElementNS(SVGNS, "path");
+        tmp.setAttribute("d", d);
+        p.parentNode.appendChild(tmp);
+        const len = tmp.getTotalLength();
+        const n = Math.max(16, Math.min(200, Math.ceil(len / 6)));
+        const pts = [];
+        for (let i = 0; i <= n; i++) { const q = tmp.getPointAtLength(len * i / n); pts.push({ x: q.x, y: q.y, t: i / n }); }
+        tmp.remove();
+        return pts;
+      }
+      function deform(pts, dA, dB) {
+        const moved = pts.map((q) => ({ x: q.x + dA.x * (1 - q.t) + dB.x * q.t, y: q.y + dA.y * (1 - q.t) + dB.y * q.t }));
+        return curvePath(simplify(moved, 0.4));
+      }
+      // 表のずれ（"dx,dy"）を、線の座標のずれにする（図はすべて同じ座標系なのでそのまま）
+      const nodeDelta = (key) => {
+        const g = key && byKey(key);
+        const v = g && num(get(g));
+        return v ? { x: v[0], y: v[1] } : { x: 0, y: 0 };
+      };
+      // 自動の線（Mermaid の線）を、今の表の位置に合わせた形。表が動いていなければ null（元の線）
+      function autoD(p) {
+        const a = nodeDelta(p.dataset.snapSrc), b = nodeDelta(p.dataset.snapDst);
+        if (!a.x && !a.y && !b.x && !b.y) return null;
+        return deform(samples(p, p.dataset.snapOrig), a, b);
+      }
+
+      // ドラッグの始まり：何を動かすかと、動かす前の形を覚える
+      function startDrag(kind, target, handle) {
+        const movedNodes = new Set();
+        if (kind === "node") movedNodes.add(target.dataset.snapKey);
+        if (kind === "cluster" && handle === "move") {
+          const cr = target.querySelector(":scope > rect").getBoundingClientRect();
+          nodes().forEach((g) => {
+            const c = center(g.getBoundingClientRect());
+            if (c.x > cr.left && c.x < cr.right && c.y > cr.top && c.y < cr.bottom) movedNodes.add(g.dataset.snapKey);
+          });
+        }
+        const es = edges().filter((p) => movedNodes.has(p.dataset.snapSrc) || movedNodes.has(p.dataset.snapDst)).map((p) => ({
+          p, from: current(p), pts: samples(p, p.getAttribute("d")),
+          wA: movedNodes.has(p.dataset.snapSrc) ? 1 : 0, wB: movedNodes.has(p.dataset.snapDst) ? 1 : 0,
+        }));
+        const ekeys = new Map(es.map((e) => [e.p.dataset.snapKey, e]));
+        const labels = [...svgEl.querySelectorAll("g.edgeLabel")].filter((g) => ekeys.has(g.dataset.snapEdge)).map((g) => {
+          const e = ekeys.get(g.dataset.snapEdge);
+          return { g, from: moved(g), w: (e.wA + e.wB) / 2 };
+        });
+        const terms = [...svgEl.querySelectorAll("g.edgeTerminals")].filter((g) => movedNodes.has(g.dataset.snapNode)).map((g) => ({ g, from: moved(g), w: 1 }));
+        return {
+          kind, target, handle, from: get(target),
+          nodes: [...movedNodes].filter((k) => !(kind === "node" && k !== target.dataset.snapKey)).map((k) => ({ g: byKey(k), from: get(byKey(k)) })),
+          es, labels, terms,
+        };
+      }
+      // ドラッグ中・終わりの形を計算する（d：ずれ、local の単位）
+      function changesFor(s, d) {
+        const out = [];
+        const add = (a, b) => fmt(a.map((n, i) => n + (b[i] || 0)));
+        if (s.kind === "cluster") {
+          const base = num(s.from) || [0, 0, 0, 0];
+          const delta = s.handle === "move" ? [d.x, d.y, 0, 0] : [0, 0, s.handle === "h" ? 0 : d.x, s.handle === "w" ? 0 : d.y];
+          out.push({ kind: "cluster", key: s.target.dataset.snapKey, from: s.from, to: add(base, delta) });
+        }
+        if (s.kind === "node" || s.handle === "move") {
+          s.nodes.forEach((n) => out.push({ kind: "node", key: n.g.dataset.snapKey, from: n.from, to: add(num(n.from) || [0, 0], [d.x, d.y]) }));
+          s.es.forEach((e) => out.push({ kind: "route", key: e.p.dataset.snapKey, from: e.from, to: deform(e.pts, { x: d.x * e.wA, y: d.y * e.wA }, { x: d.x * e.wB, y: d.y * e.wB }) }));
+          [...s.labels, ...s.terms].forEach((m) => out.push({ kind: "move", key: m.g.dataset.snapKey, from: m.from, to: add(num(m.from) || [0, 0], [d.x * m.w, d.y * m.w]) }));
+        }
+        return out;
+      }
+
+      // 押した所が枠のどこか（右下の角・右辺・下辺なら大きさ、上辺・左辺・名前なら移動）
+      function clusterHandle(e) {
+        const pad = 6;
+        for (const g of clusters().reverse()) {
+          const rr = g.querySelector(":scope > rect");
+          if (!rr) continue;
+          const r = rr.getBoundingClientRect();
+          const x = e.clientX, y = e.clientY;
+          const inY = y >= r.top - pad && y <= r.bottom + pad, inX = x >= r.left - pad && x <= r.right + pad;
+          const nearR = Math.abs(x - r.right) <= pad && inY, nearB = Math.abs(y - r.bottom) <= pad && inX;
+          const nearL = Math.abs(x - r.left) <= pad && inY, nearT = Math.abs(y - r.top) <= pad && inX;
+          if (Math.abs(x - r.right) <= 12 && Math.abs(y - r.bottom) <= 12) return { g, handle: "both" };
+          if (nearR) return { g, handle: "w" };
+          if (nearB) return { g, handle: "h" };
+          const label = g.querySelector(":scope > g.cluster-label");
+          if (nearL || nearT || (label && label.contains(e.target))) return { g, handle: "move" };
+        }
+        return null;
+      }
+
+      return { remember, set, get, autoD, startDrag, changesFor, clusterHandle, nodes };
+    })();
+    // 1 回の操作として変え、履歴に積む。変わった数を返す
+    function apply(changes) {
+      changes = changes.filter((c) => c.from !== c.to);
+      if (!changes.length) return 0;
+      changes.forEach((c) => setState(c, c.to));
+      undoStack.push(changes);
+      if (undoStack.length > 200) undoStack.shift();
+      redoStack = [];
+      fitViewBox();
+      updateButtons();
+      return changes.length;
+    }
+    function undo() {
+      const changes = undoStack.pop();
+      if (!changes) return flash("戻す変更はありません");
+      changes.forEach((c) => setState(c, c.from));
+      redoStack.push(changes);
+      fitViewBox();
+      updateButtons();
+      flash(`変更を 1 つ戻しました（あと ${undoStack.length} 回戻せます）`, "ok");
+    }
+    function redo() {
+      const changes = redoStack.pop();
+      if (!changes) return flash("やり直す変更はありません");
+      changes.forEach((c) => setState(c, c.to));
+      undoStack.push(changes);
+      fitViewBox();
+      updateButtons();
+      flash("変更をやり直しました", "ok");
+    }
+    function updateButtons() {
+      $("undoRoute").disabled = !undoStack.length;
+      $("redoRoute").disabled = !redoStack.length;
+      const b = $("alignCenter");
+      b.disabled = !selected.length;
+      b.textContent = selected.length && selected.every(isCentered) ? "中央ぞろえを解除" : "中央ぞろえ";
+    }
+    // 描いた線が元の図の範囲（viewBox）の外を通るときは、図の範囲を広げる。PNG の大きさもこれで決まる
+    function fitViewBox() {
+      if (!svgEl) return;
+      if (!svgEl.dataset.snapViewBox) svgEl.dataset.snapViewBox = svgEl.getAttribute("viewBox") || "";
+      const base = svgEl.dataset.snapViewBox.split(/[\s,]+/).map(Number);
+      if (base.length !== 4 || base.some(isNaN)) return;
+      let [x0, y0, x1, y1] = [base[0], base[1], base[0] + base[2], base[1] + base[3]];
+      // 図の中身全体（線・表・枠・ラベル）が入るように広げる
+      const content = svgEl.querySelector(":scope > g");
+      if (content) {
+        const b = content.getBBox(), pad = 8;
+        if (b.width || b.height) {
+          x0 = Math.min(x0, b.x - pad); y0 = Math.min(y0, b.y - pad);
+          x1 = Math.max(x1, b.x + b.width + pad); y1 = Math.max(y1, b.y + b.height + pad);
+        }
+      }
+      const next = `${x0} ${y0} ${x1 - x0} ${y1 - y0}`;
+      if (next === svgEl.getAttribute("viewBox")) return;
+      // 「全体表示」のままだと、図の範囲が広がるたびに表示が縮んで動かしにくいので、今の倍率に固定する
+      if (zoom === 0) { const w = svgSize(svgEl).w; if (w) zoom = svgEl.getBoundingClientRect().width / w; }
+      svgEl.setAttribute("viewBox", next);
+      applyZoom();
+    }
+    let silent = false; // ドラッグ中の仮の見た目は保存しない
+    function storeKey(key, value) {
+      if (silent) return;
+      const all = readAll();
+      const cur = all[diagramKey] || {};
+      if (value) cur[key] = value; else delete cur[key];
+      if (Object.keys(cur).length) all[diagramKey] = cur; else delete all[diagramKey];
+      writeAll(all);
+      notifyParent("snap:dirty");
+    }
+    // workbench から：PNG に入っていた手直しを、この図の保存場所に入れておく（このあと描くと戻る）
+    function importLayout(theme, code, layout) {
+      const key = hash(theme + "\n" + code);
+      const all = readAll();
+      if (layout && Object.keys(layout).length) all[key] = layout; else delete all[key];
+      writeAll(all);
+    }
+    const currentLayout = () => (diagramKey && readAll()[diagramKey]) || {};
+
+    // 座標：線の path の座標系（local）と画面の座標（client）を行き来する
+    const toLocal = (p, x, y) => new DOMPoint(x, y).matrixTransform(p.getScreenCTM().inverse());
+    const toClient = (p, pt) => new DOMPoint(pt.x, pt.y).matrixTransform(p.getScreenCTM());
+    const scaleOf = (p) => { const m = p.getScreenCTM(); return Math.hypot(m.a, m.b) || 1; };
+    const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+    // 画面の点に一番近い線（NEAR_PX 以内）
+    function nearestEdge(cx, cy) {
+      let best = null, bestD = NEAR_PX;
+      for (const p of edges()) {
+        let len = 0;
+        try { len = p.getTotalLength(); } catch (e) { continue; }
+        const steps = Math.min(400, Math.max(8, Math.ceil(len * scaleOf(p) / 4)));
+        for (let i = 0; i <= steps; i++) {
+          const c = toClient(p, p.getPointAtLength(len * i / steps));
+          const d = Math.hypot(c.x - cx, c.y - cy);
+          if (d < bestD) { bestD = d; best = p; }
+        }
+      }
+      return best;
+    }
+    function setHover(p) {
+      if (hoverEdge === p) return;
+      hoverEdge?.classList.remove("snap-edge-hover");
+      hoverEdge = p;
+      p?.classList.add("snap-edge-hover");
+      stage.classList.toggle("near-edge", !!p);
+    }
+
+    // 元の経路の始点・終点が付いている箱（g.node）を、線の座標系の矩形で返す
+    function nodeRects(p) {
+      const inv = p.getScreenCTM().inverse();
+      return [...svgEl.querySelectorAll("g.node")].map((n) => {
+        const r = n.getBoundingClientRect();
+        const a = new DOMPoint(r.left, r.top).matrixTransform(inv), b = new DOMPoint(r.right, r.bottom).matrixTransform(inv);
+        return { left: Math.min(a.x, b.x), top: Math.min(a.y, b.y), right: Math.max(a.x, b.x), bottom: Math.max(a.y, b.y) };
+      });
+    }
+    const rectDist = (r, pt) => Math.hypot(Math.max(r.left - pt.x, 0, pt.x - r.right), Math.max(r.top - pt.y, 0, pt.y - r.bottom));
+    const inside = (r, pt) => pt.x > r.left && pt.x < r.right && pt.y > r.top && pt.y < r.bottom;
+    const closestRect = (rects, pt) => rects.reduce((best, r) => (!best || rectDist(r, pt) < rectDist(best, pt) ? r : best), null);
+    // 箱の中心から点 to に向かう線が、箱の枠と交わる点
+    function borderPoint(r, to) {
+      const c = { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 };
+      const dx = to.x - c.x, dy = to.y - c.y;
+      const tx = dx > 0 ? (r.right - c.x) / dx : dx < 0 ? (r.left - c.x) / dx : Infinity;
+      const ty = dy > 0 ? (r.bottom - c.y) / dy : dy < 0 ? (r.top - c.y) / dy : Infinity;
+      const t = Math.min(tx, ty);
+      return isFinite(t) ? { x: c.x + dx * t, y: c.y + dy * t } : c;
+    }
+
+    // 点の並びを一定の間隔に並べ直す
+    function resample(pts, step) {
+      const outPts = [pts[0]];
+      let prev = pts[0], acc = 0;
+      for (let i = 1; i < pts.length; i++) {
+        let cur = pts[i], d = dist(prev, cur);
+        while (acc + d >= step) {
+          const t = (step - acc) / d;
+          const np = { x: prev.x + (cur.x - prev.x) * t, y: prev.y + (cur.y - prev.y) * t };
+          outPts.push(np); prev = np; d = dist(prev, cur); acc = 0;
+        }
+        acc += d; prev = cur;
+      }
+      const last = pts[pts.length - 1];
+      if (dist(outPts[outPts.length - 1], last) > step * 0.3) outPts.push(last);
+      return outPts;
+    }
+    // 前後の点と平均して手ぶれをならす（両端は動かさない）
+    function average(pts, k) {
+      if (k < 1 || pts.length < 3) return pts;
+      return pts.map((p, i) => {
+        if (i === 0 || i === pts.length - 1) return p;
+        let sx = 0, sy = 0, n = 0;
+        for (let j = Math.max(0, i - k); j <= Math.min(pts.length - 1, i + k); j++) { sx += pts[j].x; sy += pts[j].y; n++; }
+        return { x: sx / n, y: sy / n };
+      });
+    }
+    // 形を保ったまま点を間引く（Ramer–Douglas–Peucker）
+    function simplify(pts, eps) {
+      if (pts.length < 3) return pts;
+      const a = pts[0], b = pts[pts.length - 1];
+      let idx = -1, maxD = 0;
+      const len = dist(a, b) || 1;
+      for (let i = 1; i < pts.length - 1; i++) {
+        const d = Math.abs((b.x - a.x) * (a.y - pts[i].y) - (a.x - pts[i].x) * (b.y - a.y)) / len;
+        if (d > maxD) { maxD = d; idx = i; }
+      }
+      if (maxD <= eps) return [a, b];
+      return simplify(pts.slice(0, idx + 1), eps).slice(0, -1).concat(simplify(pts.slice(idx), eps));
+    }
+    // 点を通るなめらかな曲線。点の間隔がそろっていなくても膨らまない centripetal Catmull-Rom を 3 次ベジェにする
+    function curvePath(pts) {
+      const f = (n) => Math.round(n * 100) / 100;
+      if (pts.length === 2) return `M${f(pts[0].x)},${f(pts[0].y)}L${f(pts[1].x)},${f(pts[1].y)}`;
+      let d = `M${f(pts[0].x)},${f(pts[0].y)}`;
+      for (let i = 0; i < pts.length - 1; i++) {
+        const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+        const d1 = Math.sqrt(dist(p0, p1)), d2 = Math.sqrt(dist(p1, p2)), d3 = Math.sqrt(dist(p2, p3));
+        const ctrl = (a, b, c, da, db) => {
+          // b から c へ向かう区間の、b 側の制御点（a は b の 1 つ前の点、da = |b-a|^0.5、db = |c-b|^0.5）
+          if (da < 1e-6) return { x: b.x + (c.x - b.x) / 3, y: b.y + (c.y - b.y) / 3 };
+          const k = 3 * da * (da + db);
+          return {
+            x: (da * da * c.x - db * db * a.x + (2 * da * da + 3 * da * db + db * db) * b.x) / k,
+            y: (da * da * c.y - db * db * a.y + (2 * da * da + 3 * da * db + db * db) * b.y) / k,
+          };
+        };
+        const c1 = ctrl(p0, p1, p2, d1, d2);
+        const c2 = ctrl(p3, p2, p1, d3, d2);
+        d += `C${f(c1.x)},${f(c1.y)} ${f(c2.x)},${f(c2.y)} ${f(p2.x)},${f(p2.y)}`;
+      }
+      return d;
+    }
+
+    // 描いた点を、元の線の始点の箱 → 描いた経路 → 終点の箱 の曲線に整える
+    function shape(p, raw, opt) {
+      const scale = scaleOf(p);
+      const tmp = document.createElementNS(SVGNS, "path");
+      // 今の線の始点・終点（表を動かしていれば、動かした後の位置）
+      tmp.setAttribute("d", p.getAttribute("d"));
+      p.parentNode.appendChild(tmp);
+      const total = tmp.getTotalLength();
+      const A = tmp.getPointAtLength(0), B = tmp.getPointAtLength(total);
+      tmp.remove();
+      const rects = nodeRects(p);
+      const ra = closestRect(rects, A), rb = closestRect(rects, B);
+      let pts = raw.slice();
+      // 描き始めが終点の箱に近ければ、向きを元の線（始点 → 終点）にそろえる。矢じりの向きを変えないため
+      if (dist(pts[0], B) + dist(pts[pts.length - 1], A) < dist(pts[0], A) + dist(pts[pts.length - 1], B)) pts.reverse();
+      // 箱の中と、箱のすぐそば（枠から出る部分と折り返さないように）は捨てる
+      const margin = 16 / scale;
+      if (ra) while (pts.length && rectDist(ra, pts[0]) < margin) pts.shift();
+      if (rb) while (pts.length && rectDist(rb, pts[pts.length - 1]) < margin) pts.pop();
+      if (pts.length < 2) return null;
+      pts = resample(pts, 4 / scale);
+      pts = average(pts, opt.avg);
+      const smoothed = pts;
+      let eps = opt.eps / scale;
+      pts = simplify(smoothed, eps);
+      // 強い補正では、途中の点が多すぎるときに間引きを強め、少ない点で大きくゆるやかに曲げる
+      while (pts.length - 2 > opt.max && eps < 1e6) { eps *= 1.5; pts = simplify(smoothed, eps); }
+      // 線の端は、元の線と同じだけ箱の枠から離す（Mermaid は矢じりや菱形が箱に隠れないよう少し離している）
+      const away = (r, at, gap) => {
+        const c = { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 };
+        const l = dist(c, at) || 1;
+        return { x: at.x + (at.x - c.x) / l * gap, y: at.y + (at.y - c.y) / l * gap };
+      };
+      const start = ra && ra !== rb ? away(ra, borderPoint(ra, pts[0]), rectDist(ra, A)) : A;
+      const end = rb && ra !== rb ? away(rb, borderPoint(rb, pts[pts.length - 1]), rectDist(rb, B)) : B;
+      // 箱の枠から少しだけ離れた点を足し、枠に対してまっすぐ出入りするようにする
+      const lead = (from, to) => { const l = dist(from, to) || 1, s = Math.min(l / 3, 12 / scale); return { x: from.x + (to.x - from.x) / l * s, y: from.y + (to.y - from.y) / l * s }; };
+      const all = [start, lead(start, pts[0]), ...pts, lead(end, pts[pts.length - 1]), end]
+        .filter((q, i, arr) => i === 0 || dist(q, arr[i - 1]) > 0.5 / scale);
+      return curvePath(all);
+    }
+
+    function begin(e) {
+      const p = nearestEdge(e.clientX, e.clientY);
+      if (!p) return false;
+      const opt = SMOOTH[$("smooth").value] || SMOOTH[3];
+      const scale = scaleOf(p);
+      const preview = document.createElementNS(SVGNS, "path");
+      preview.setAttribute("class", "snap-preview");
+      preview.setAttribute("fill", "none");
+      preview.setAttribute("stroke", "#e8590c");
+      preview.setAttribute("stroke-width", String(2.5 / scale));
+      preview.setAttribute("stroke-linecap", "round");
+      preview.setAttribute("stroke-linejoin", "round");
+      p.parentNode.appendChild(preview);
+      setHover(null);
+      p.classList.add("snap-edge-dim");
+      const first = toLocal(p, e.clientX, e.clientY);
+      stroke = { id: e.pointerId, p, preview, opt, raw: [{ x: first.x, y: first.y }], lazy: { x: first.x, y: first.y } };
+      try { stage.setPointerCapture(e.pointerId); } catch (err) { /* 取れなくても描ける */ }
+      return true;
+    }
+    function move(e) {
+      const s = stroke;
+      const pt = toLocal(s.p, e.clientX, e.clientY);
+      // 描いている間も、ペンの位置に少し遅れて追いかけることで手ぶれを抑える
+      s.lazy = { x: s.lazy.x + (pt.x - s.lazy.x) * s.opt.lazy, y: s.lazy.y + (pt.y - s.lazy.y) * s.opt.lazy };
+      if (dist(s.lazy, s.raw[s.raw.length - 1]) * scaleOf(s.p) >= 1.5) s.raw.push({ ...s.lazy });
+      s.preview.setAttribute("d", "M" + s.raw.map((q) => `${q.x},${q.y}`).join("L"));
+    }
+    function end(e, cancel) {
+      const s = stroke;
+      stroke = null;
+      s.preview.remove();
+      s.p.classList.remove("snap-edge-dim");
+      if (cancel) return;
+      const last = toLocal(s.p, e.clientX, e.clientY);
+      s.raw.push({ x: last.x, y: last.y });
+      const totalPx = s.raw.reduce((acc, q, i) => i ? acc + dist(q, s.raw[i - 1]) : 0, 0) * scaleOf(s.p);
+      if (totalPx < 12) return flash("線の上からドラッグして経路を描いてください");
+      const d = shape(s.p, s.raw, s.opt);
+      if (!d) return flash("箱の外を通るように描いてください", "bad");
+      apply([{ kind: "route", key: s.p.dataset.snapKey, from: current(s.p), to: d }]);
+      flash("線の経路を描き直しました（Ctrl+Z で戻せます）", "ok");
+    }
+
+    function setMode(on) {
+      mode = on;
+      $("drawMode").setAttribute("aria-pressed", String(on));
+      stage.classList.toggle("draw-mode", on);
+      if (!on) { setHover(null); stage.classList.remove("near-edge"); }
+    }
+
+    // 線を描くモードの間は、図を動かす（パン）より先に受け取る
+    stage.addEventListener("pointerdown", (e) => {
+      if (!mode || e.button !== 0 || !svgEl) return;
+      // ラベル・多重度の上で押したときは、線を描かずに動かす
+      if (movableAt(e)) return;
+      if (begin(e)) { down = null; e.preventDefault(); e.stopImmediatePropagation(); }
+    }, true);
+    stage.addEventListener("pointermove", (e) => {
+      if (stroke && e.pointerId === stroke.id) { move(e); e.stopImmediatePropagation(); return; }
+      if (!mode || drag) return;
+      cancelAnimationFrame(hoverRaf);
+      const x = e.clientX, y = e.clientY;
+      hoverRaf = requestAnimationFrame(() => setHover(nearestEdge(x, y)));
+    }, true);
+    stage.addEventListener("pointerup", (e) => {
+      if (stroke && e.pointerId === stroke.id) { end(e, false); e.stopImmediatePropagation(); }
+    }, true);
+    stage.addEventListener("pointercancel", (e) => {
+      if (stroke && e.pointerId === stroke.id) { end(e, true); e.stopImmediatePropagation(); }
+    }, true);
+    stage.addEventListener("pointerleave", () => { if (!stroke) setHover(null); });
+    // 線を描くモードで線をダブルクリックすると、自動の経路に戻す（文字の編集より先に受け取る）
+    stage.addEventListener("dblclick", (e) => {
+      if (!mode || !svgEl) return;
+      const p = nearestEdge(e.clientX, e.clientY);
+      if (!p) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      if (!apply([{ kind: "route", key: p.dataset.snapKey, from: current(p), to: layout.autoD(p) }])) return flash("この線は自動の経路のままです");
+      flash("線を自動の経路に戻しました（Ctrl+Z で取り消せます）", "ok");
+    }, true);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && stroke) { end(e, true); return; }
+      if (e.key === "Escape" && selected.length) { select([]); return; }
+      // Ctrl+Z で 1 つ戻す、Ctrl+Y／Ctrl+Shift+Z でやり直す。コードの欄や入力欄の中では、そちらの取り消しを使う
+      const tag = (document.activeElement && document.activeElement.tagName) || "";
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || stroke || /^(TEXTAREA|INPUT|SELECT)$/.test(tag)) return;
+      const k = e.key.toLowerCase();
+      // コードを変えると線の履歴は消えるので、そのときは文字を消す前のコードに戻す
+      if (k === "z" && !e.shiftKey) { e.preventDefault(); if (undoStack.length || !codeHistory.length) undo(); else undoCode(); }
+      else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
+    });
+
+    // 図の文字をクリックで選ぶ（Ctrl+クリック（または Shift+クリック）で足す・外す）。図を動かした（ドラッグした）ときは選ばない
+    function select(list) {
+      selected.forEach((t) => t.classList.remove("snap-selected"));
+      selected = list;
+      selected.forEach((t) => t.classList.add("snap-selected"));
+      updateButtons();
+    }
+    let down = null;
+    stage.addEventListener("pointerdown", (e) => { down = { x: e.clientX, y: e.clientY }; }, true);
+    stage.addEventListener("click", (e) => {
+      if (!svgEl || !down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) return;
+      const hit = document.elementFromPoint(e.clientX, e.clientY);
+      let t = hit && out.contains(hit) ? hit.closest("text") : null;
+      // 文字に当たらなかったとき（2 行の名前の行と行の間など）は、少し外側（4px）まで含めて近い文字を選ぶ
+      if (!t && hit && out.contains(hit)) {
+        const pad = 4;
+        t = [...svgEl.querySelectorAll("text[data-snap-key]")].find((x) => {
+          const r = x.getBoundingClientRect();
+          return r.width && e.clientX >= r.left - pad && e.clientX <= r.right + pad && e.clientY >= r.top - pad && e.clientY <= r.bottom + pad;
+        }) || null;
+      }
+      if (t && !t.dataset.snapKey) return;
+      if (e.ctrlKey || e.metaKey || e.shiftKey) {
+        if (t) select(selected.includes(t) ? selected.filter((x) => x !== t) : [...selected, t]);
+      } else {
+        select(t ? [t] : []);
+      }
+    });
+    $("alignCenter").addEventListener("click", () => {
+      if (!selected.length) return;
+      const to = !selected.every(isCentered);
+      const n = apply(selected.map((t) => ({ kind: "align", key: t.dataset.snapKey, from: isCentered(t), to })));
+      updateButtons();
+      if (n) flash(to ? `${n} か所の文字を中央にそろえました（Ctrl+Z で戻せます）` : `${n} か所の文字を元のそろえに戻しました`, "ok");
+    });
+
+    // 選んだ文字を Backspace／Delete で消す（コードからその文字を消す）。消すと図が書けなくなるときは消さない
+    document.addEventListener("keydown", async (e) => {
+      if ((e.key !== "Backspace" && e.key !== "Delete") || !selected.length || editing || stroke) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+      const tag = (document.activeElement && document.activeElement.tagName) || "";
+      if (/^(TEXTAREA|INPUT|SELECT)$/.test(tag)) return;
+      e.preventDefault();
+      const all = [];
+      let missing = 0;
+      const code0 = src.value;
+      // 複数行の文字の 1 行だけを消すときは、上の行の終わりの改行（<br>）も消して、空の行を残さない。
+      // 上の行が無い（1 行目を消す）ときは、下の行との間の <br> を消す
+      const withBr = (r) => {
+        const before = code0.slice(0, r.start).match(/[ \t]*<br\s*\/?>[ \t]*$/i);
+        if (before) return { start: r.start - before[0].length, end: r.end };
+        const after = code0.slice(r.end).match(/^[ \t]*<br\s*\/?>[ \t]*/i);
+        return after ? { start: r.start, end: r.end + after[0].length } : r;
+      };
+      // 名前は同じ名前を全部消すが、ファイル名の一部（(Page.jsx) の Page など）は別の文字なので消さない
+      const partOfFile = (r) => /[.(\/]/.test(code0[r.start - 1] || "") || /[.)\/]/.test(code0[r.end] || "");
+      selected.forEach((t) => {
+        const tg = findTarget(t);
+        if (!tg) { missing++; return; }
+        const rs = tg.ranges.length > 1 ? tg.ranges.filter((r) => !partOfFile(r)) : tg.ranges;
+        all.push(...rs.map(withBr));
+      });
+      // 重なる範囲・つながる範囲は 1 つにまとめる
+      const ranges = [];
+      all.sort((a, b) => a.start - b.start).forEach((r) => {
+        const last = ranges[ranges.length - 1];
+        if (last && r.start <= last.end) last.end = Math.max(last.end, r.end);
+        else ranges.push({ start: r.start, end: r.end });
+      });
+      if (!ranges.length) return flash("選んだ文字はコードの中で見つかりませんでした", "bad");
+      // 消した行に残った <br>（ラベルの始め・終わりにあるもの、二重のもの）も片付ける。片付けた分も消す範囲に足す
+      const BR = /<br\s*\/?>/i;
+      const lineStarts = new Set(ranges.map((r) => code0.lastIndexOf("\n", r.start - 1) + 1));
+      const rest = (s, e) => {
+        let line = code0.slice(s, e);
+        ranges.filter((r) => r.start >= s && r.end <= e).sort((a, b) => b.start - a.start)
+          .forEach((r) => { line = line.slice(0, r.start - s) + "\u0000".repeat(r.end - r.start) + line.slice(r.end - s); });
+        return line;
+      };
+      lineStarts.forEach((s) => {
+        let e = code0.indexOf("\n", s); if (e < 0) e = code0.length;
+        const masked = rest(s, e); // 消す所を \0 にした行
+        const re = /[ \t]*<br\s*\/?>[ \t]*/gi;
+        let m;
+        while ((m = re.exec(masked))) {
+          const before = masked.slice(0, m.index).replace(/\u0000/g, "");
+          const after = masked.slice(m.index + m[0].length).replace(/\u0000/g, "");
+          // ラベルの終わり（行末・閉じかっこ・引用符の前）、ラベルの始め（: や as や開きかっこ・引用符の後）、次も <br> のとき
+          const atEnd = /^\s*($|["'`\]\)\}|])/.test(after);
+          const atStart = /(^|:|\bas|["'`\[\(\{|])\s*$/.test(before);
+          const doubled = BR.test(after.slice(0, 12)) && /^\s*<br/i.test(after);
+          if (atEnd || atStart || doubled) ranges.push({ start: s + m.index, end: s + m.index + m[0].length });
+        }
+      });
+      ranges.sort((a, b) => a.start - b.start);
+      for (let i = 1; i < ranges.length; i++) {
+        if (ranges[i].start <= ranges[i - 1].end) { ranges[i - 1].end = Math.max(ranges[i - 1].end, ranges[i].end); ranges.splice(i--, 1); }
+      }
+      let next = src.value;
+      [...ranges].sort((a, b) => b.start - a.start).forEach((r) => { next = next.slice(0, r.start) + next.slice(r.end); });
+      try { await mermaid.parse(clean(next).trim()); }
+      catch (ex) { return flash("この文字を消すと図が書けなくなるので、消しませんでした", "bad"); }
+      const before = src.value;
+      select([]);
+      await replaceRanges(ranges, "");
+      codeHistory.push({ before, after: src.value });
+      if (codeHistory.length > 50) codeHistory.shift();
+      flash(`${ranges.length} か所の文字を消しました（Ctrl+Z で戻せます）${missing ? `。${missing} か所はコードで見つからず残しました` : ""}`, "ok");
+    });
+
+    $("drawMode").addEventListener("click", () => setMode(!mode));
+    $("undoRoute").addEventListener("click", undo);
+    $("redoRoute").addEventListener("click", redo);
+    $("smooth").addEventListener("change", save);
+    $("resetRoutes").addEventListener("click", () => {
+      if (!svgEl) return;
+      const n = apply([
+        ...edges().map((p) => ({ kind: "route", key: p.dataset.snapKey, from: current(p), to: null })),
+        ...[...svgEl.querySelectorAll("g.node[data-snap-layout], g.cluster[data-snap-layout]")].map((g) => ({ kind: g.classList.contains("node") ? "node" : "cluster", key: g.dataset.snapKey, from: layout.get(g), to: null })),
+        ...[...svgEl.querySelectorAll("g[data-snap-moved]")].map((g) => ({ kind: "move", key: g.dataset.snapKey, from: moved(g), to: null })),
+      ]);
+      if (!n) return flash("手で描いた線も、動かしたラベル・多重度もありません");
+      flash(`${n} か所を自動の線と位置に戻しました（Ctrl+Z で取り消せます）`, "ok");
+    });
+
+    // 線のラベルと多重度をドラッグで動かす。放したら 1 回の操作として履歴に積む。ほとんど動かさなければクリック（文字を選ぶ）として扱う
+    let moving = null;
+    stage.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || !svgEl || stroke) return;
+      const g = movableAt(e);
+      if (!g) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      const inv = g.parentNode.getScreenCTM().inverse();
+      const start = new DOMPoint(e.clientX, e.clientY).matrixTransform(inv);
+      const [dx, dy] = moved(g) ? moved(g).split(",").map(Number) : [0, 0];
+      moving = { id: e.pointerId, g, inv, start, dx, dy, from: moved(g), x: e.clientX, y: e.clientY, active: false };
+      try { stage.setPointerCapture(e.pointerId); } catch (err) { /* 取れなくても動かせる */ }
+    }, true);
+    stage.addEventListener("pointermove", (e) => {
+      if (!moving || e.pointerId !== moving.id) return;
+      e.stopImmediatePropagation();
+      if (!moving.active && Math.hypot(e.clientX - moving.x, e.clientY - moving.y) < 4) return;
+      moving.active = true;
+      stage.classList.add("moving");
+      const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(moving.inv);
+      const r = (n) => Math.round(n * 100) / 100;
+      const nx = r(moving.dx + pt.x - moving.start.x), ny = r(moving.dy + pt.y - moving.start.y);
+      moving.g.setAttribute("transform", `translate(${Number(moving.g.dataset.snapX0) + nx}, ${Number(moving.g.dataset.snapY0) + ny})`);
+      moving.to = nx || ny ? `${nx},${ny}` : null;
+    }, true);
+    function endMove(e, cancel) {
+      if (!moving || e.pointerId !== moving.id) return;
+      e.stopImmediatePropagation();
+      const m = moving;
+      moving = null;
+      stage.classList.remove("moving");
+      if (!m.active) return; // クリックとして扱う（click で文字を選ぶ）
+      down = null; // 動かしたあとの click で文字を選ばない
+      if (cancel) { setMove(m.g.dataset.snapKey, m.from); return; }
+      // 動かしている間の見た目は仮なので、いったん元に戻してから履歴に積む
+      setMove(m.g.dataset.snapKey, m.from);
+      if (apply([{ kind: "move", key: m.g.dataset.snapKey, from: m.from, to: m.to }])) {
+        flash(`${m.g.classList.contains("edgeTerminals") ? "多重度" : "ラベル"}を動かしました（Ctrl+Z で戻せます）`, "ok");
+      }
+    }
+    stage.addEventListener("pointerup", (e) => endMove(e, false), true);
+    stage.addEventListener("pointercancel", (e) => endMove(e, true), true);
+
+    // 表と枠をドラッグで動かす（枠は右辺・下辺・右下の角で大きさも変える）。ラベル・多重度の上で押したときは、上の処理が先に受け取る
+    let dragBox = null;
+    const showValues = (changes) => { silent = true; changes.forEach((c) => setState(c, c.to)); silent = false; };
+    const restoreValues = (changes) => { silent = true; changes.forEach((c) => setState(c, c.from)); silent = false; };
+    stage.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || !svgEl || stroke || moving) return;
+      const node = e.target.closest && e.target.closest("g.node");
+      const ch = node && svgEl.contains(node) ? null : layout.clusterHandle(e);
+      if (!(node && svgEl.contains(node)) && !ch) return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      const s = node ? layout.startDrag("node", node, "move") : layout.startDrag("cluster", ch.g, ch.handle);
+      const inv = svgEl.querySelector(":scope > g").getScreenCTM().inverse();
+      dragBox = { id: e.pointerId, s, inv, start: new DOMPoint(e.clientX, e.clientY).matrixTransform(inv), x: e.clientX, y: e.clientY, active: false, changes: [] };
+      try { stage.setPointerCapture(e.pointerId); } catch (err) { /* 取れなくても動かせる */ }
+    }, true);
+    stage.addEventListener("pointermove", (e) => {
+      if (dragBox && e.pointerId === dragBox.id) {
+        e.stopImmediatePropagation();
+        if (!dragBox.active && Math.hypot(e.clientX - dragBox.x, e.clientY - dragBox.y) < 4) return;
+        dragBox.active = true;
+        stage.classList.add("moving");
+        const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(dragBox.inv);
+        dragBox.changes = layout.changesFor(dragBox.s, { x: pt.x - dragBox.start.x, y: pt.y - dragBox.start.y });
+        showValues(dragBox.changes);
+        return;
+      }
+      // 枠の辺・角の上では、何ができるかをカーソルで示す
+      if (!svgEl || moving || stroke || drag) return;
+      const node = e.target.closest && e.target.closest("g.node");
+      const ch = node ? null : layout.clusterHandle(e);
+      stage.dataset.handle = ch ? ch.handle : "";
+    }, true);
+    function endBox(e, cancel) {
+      if (!dragBox || e.pointerId !== dragBox.id) return;
+      e.stopImmediatePropagation();
+      const b = dragBox;
+      dragBox = null;
+      stage.classList.remove("moving");
+      if (!b.active) return; // クリックとして扱う（click で文字を選ぶ）
+      down = null;
+      restoreValues(b.changes);
+      if (cancel) return;
+      const n = apply(b.changes);
+      if (n) flash(`${b.s.kind === "node" ? "表" : b.s.handle === "move" ? "枠" : "枠の大きさ"}を変えました（Ctrl+Z で戻せます）`, "ok");
+    }
+    stage.addEventListener("pointerup", (e) => endBox(e, false), true);
+    stage.addEventListener("pointercancel", (e) => endBox(e, true), true);
+
+    return { prepare, importLayout, currentLayout };
+  })();
+
+  $("zoomIn").addEventListener("click", () => zoomAt(1.25));
+  $("zoomOut").addEventListener("click", () => zoomAt(0.8));
+  $("zoomFit").addEventListener("click", () => { zoom = 0; applyZoom(); });
+
+  $("theme").addEventListener("change", () => { init(); render(); shareChanged(); });
+  $("scale").addEventListener("change", save);
+  $("transparent").addEventListener("change", save);
+
+  src.addEventListener("input", () => { scheduleRender(); shareChanged(); notifyParent("snap:dirty"); });
+  src.addEventListener("keydown", (e) => {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const s = src.selectionStart, en = src.selectionEnd;
+      src.value = src.value.slice(0, s) + "    " + src.value.slice(en);
+      src.selectionStart = src.selectionEnd = s + 4;
+      scheduleRender();
+    }
+  });
+
+  load();
+  if (!window.mermaid) {
+    err.textContent = "Mermaidライブラリを読み込めませんでした。ネット接続を確認してページを再読み込みしてください。";
+    err.classList.add("show");
+    return;
+  }
+  init();
+  // snap.mjs（CLI）から呼ばれたときは、図を書き出して結果を返すだけにする
+  if (location.hash.startsWith("#job=")) { runJob(decodeURIComponent(location.hash.slice(5))); return; }
+  if (EMBED) { startEmbed(); return; }
+  render();
+  startSharing();
+
+  // ---- workbench.html から操作される口（postMessage） ----
+  //   snap:load   { code, theme, scale, layout } → 描いて snap:loaded { ok, error }
+  //   snap:export → snap:exported { ok, code, theme, layout, png（data URL）, error }
+  //   こちらから：snap:dirty（コードか手直しが変わった）、snap:key（Ctrl+Enter など、親の操作のキー）
+  function startEmbed() {
+    const reply = (type, obj) => window.parent.postMessage(Object.assign({ type }, obj), location.origin);
+    window.addEventListener("message", async (e) => {
+      if (e.origin !== location.origin || e.source !== window.parent || !e.data) return;
+      const d = e.data;
+      try {
+        if (d.type === "snap:load") {
+          const theme = [...$("theme").options].some((o) => o.value === d.theme) ? d.theme : "default";
+          $("theme").value = theme;
+          const sc = String(d.scale || 1);
+          if (![...$("scale").options].some((o) => o.value === sc)) $("scale").add(new Option(sc + "倍", sc));
+          $("scale").value = sc;
+          init();
+          routes.importLayout(theme, clean(d.code || "").trim(), d.layout || null);
+          codeHistory.length = 0;
+          src.value = d.code || "";
+          zoom = 0;
+          await render();
+          reply("snap:loaded", { ok: !err.classList.contains("show"), error: err.classList.contains("show") ? err.textContent : "" });
+        } else if (d.type === "snap:export") {
+          if (!lastSvg || err.classList.contains("show")) return reply("snap:exported", { ok: false, error: err.textContent || "図がありません" });
+          const b = await pngBlob();
+          const png = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(b); });
+          reply("snap:exported", { ok: true, code: src.value, theme: $("theme").value, layout: routes.currentLayout(), png });
+        }
+      } catch (ex) {
+        reply(d.type === "snap:load" ? "snap:loaded" : "snap:exported", { ok: false, error: String((ex && ex.message) || ex) });
+      }
+    });
+    document.addEventListener("keydown", (e) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (mod && (e.key === "Enter" || e.key === "s" || e.key === "S")) {
+        e.preventDefault();
+        notifyParent("snap:key", { key: e.key === "Enter" ? (e.shiftKey ? "prev" : "next") : "save" });
+      }
+    }, true);
+    notifyParent("snap:ready");
+  }
+
+  function runJob(jobUrl) {
+    const box = document.createElement("pre");
+    box.id = "snap-result";
+    box.hidden = true;
+    document.body.appendChild(box);
+    const done = (obj) => { box.textContent = btoa(unescape(encodeURIComponent(JSON.stringify(obj)))); };
+    window.__snapJob = async (job) => {
+      try {
+        if (job.theme) {
+          if (![...$("theme").options].some((o) => o.value === job.theme)) return done({ ok: false, error: "テーマ名が違います: " + job.theme });
+          $("theme").value = job.theme;
+          init();
+        }
+        const sc = String(job.scale || 2);
+        if (![...$("scale").options].some((o) => o.value === sc)) $("scale").add(new Option(sc, sc));
+        $("scale").value = sc;
+        $("transparent").checked = !!job.transparent;
+        src.value = job.code;
+        await render();
+        if (!lastSvg || err.classList.contains("show")) return done({ ok: false, error: err.textContent || "図を描けませんでした" });
+        const res = { ok: true, svg: exportSvg().text, code: clean(src.value).trim() + "\n" };
+        if (job.png) {
+          const b = await pngBlob();
+          res.png = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(b); });
+        }
+        done(res);
+      } catch (e) {
+        done({ ok: false, error: String((e && e.message) || e) });
+      }
+    };
+    const tag = document.createElement("script");
+    tag.src = jobUrl;
+    tag.onerror = () => done({ ok: false, error: "ジョブファイルを読み込めませんでした" });
+    document.head.appendChild(tag);
+  }
+
+  // ---- 共有（claude.ai のアーティファクト上でだけ動く。HTML単体ではこの端末のみ） ----
+  function shareChanged() {} // 共有が始まったら差し替える
+  function setSync(text, cls, title) {
+    const el = $("sync");
+    el.textContent = text;
+    el.className = "sync" + (cls ? " " + cls : "");
+    el.title = title || "";
+  }
+  async function startSharing() {
+    if (!window.claude || typeof window.claude.use !== "function") return; // 単体HTML：その場限り
+    let db = null;
+    try { db = await window.claude.use("db"); } catch (e) { db = null; }
+    if (!db) return;
+    const ref = db.doc("shared/diagram");
+    const tab = Math.random().toString(36).slice(2);
+    let shared = null;        // 最後に共有ストアと一致していた内容
+    let ready = false, readOnly = false, writing = false, timer = 0, lastLocalEdit = 0;
+    setSync("共有に接続中…");
+    const loadTimer = setTimeout(() => setSync("共有に接続できません", "warn", "この端末の内容だけで動いています"), 10000);
+
+    const current = () => ({ code: src.value, theme: $("theme").value });
+    const same = (a, b) => a && b && a.code === b.code && a.theme === b.theme;
+
+    function applyRemote(d) {
+      const pos = [src.selectionStart, src.selectionEnd], top = src.scrollTop;
+      if (typeof d.code === "string" && d.code !== src.value) {
+        src.value = d.code;
+        if (document.activeElement === src) src.setSelectionRange(Math.min(pos[0], d.code.length), Math.min(pos[1], d.code.length));
+        src.scrollTop = top;
+      }
+      if (typeof d.theme === "string" && d.theme !== $("theme").value && [...$("theme").options].some((o) => o.value === d.theme)) {
+        $("theme").value = d.theme;
+        init();
+      }
+      render();
+    }
+
+    async function flush() {
+      if (writing || readOnly || !ready) return;
+      const now = current();
+      if (same(now, shared)) return;
+      writing = true;
+      setSync("保存中…", "live");
+      try {
+        await ref.set({ code: now.code, theme: now.theme, by: tab, at: new Date().toISOString() });
+        shared = now;
+        setSync("共有中", "live", "アクセスした人と内容を共有しています");
+      } catch (e) {
+        if (e && (e.code === "invalid_argument" || e.code === "not_granted" || e.code === "revoked")) {
+          readOnly = true;
+          setSync("閲覧のみ", "warn", "編集はこの画面だけに反映され、共有されません");
+        } else if (e && e.code === "quota_exceeded") {
+          setSync("保存できません", "warn", "共有の保存容量がいっぱいです");
+        } else {
+          setSync("保存に失敗", "warn", "少し待ってからもう一度編集してください");
+        }
+      } finally {
+        writing = false;
+      }
+      if (!readOnly && !same(current(), shared)) schedule();
+    }
+    function schedule() { clearTimeout(timer); timer = setTimeout(flush, 700); }
+    shareChanged = function () { lastLocalEdit = Date.now(); if (ready) schedule(); };
+
+    ref.onSnapshot((snap) => {
+      if (!snap.metadata.fromCache) clearTimeout(loadTimer);
+      if (snap.metadata.hasPendingWrites) return; // 自分の書き込み
+      const d = snap.exists ? snap.data() : null;
+      if (!ready) {
+        if (snap.metadata.fromCache && !d) return;
+        ready = true;
+        if (d) { shared = { code: d.code, theme: d.theme }; applyRemote(d); }
+        else { shared = { code: null, theme: null }; }
+        setSync(readOnly ? "閲覧のみ" : "共有中", readOnly ? "warn" : "live", "アクセスした人と内容を共有しています");
+        return;
+      }
+      if (!d || d.by === tab) { if (d) shared = { code: d.code, theme: d.theme }; return; }
+      // 自分が打っている最中は上書きしない（自分の保存が後から勝つ）
+      if (Date.now() - lastLocalEdit < 1500 || (!readOnly && (writing || !same(current(), shared)))) return;
+      shared = { code: d.code, theme: d.theme };
+      applyRemote(d);
+    }, (e) => {
+      clearTimeout(loadTimer);
+      setSync("共有が切れました", "warn", "この端末の内容だけで動いています");
+      shareChanged = function () {};
+    });
+  }
+})();
+</script>
+
+</body>
+</html>
