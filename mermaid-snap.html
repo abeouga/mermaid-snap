@@ -449,7 +449,7 @@ main.collapsed .expand:hover { color: var(--accent); }
 
   $("collapse").addEventListener("click", () => { setCollapsed(true); save(); $("expand").focus(); });
   $("expand").addEventListener("click", () => { setCollapsed(false); save(); src.focus(); });
-  $("clear").addEventListener("click", () => { src.value = ""; render(); shareChanged(); src.focus(); });
+  $("clear").addEventListener("click", () => { routes.clearHistory(); src.value = ""; render(); shareChanged(); src.focus(); });
   $("modalClose").addEventListener("click", () => { $("modal").hidden = true; });
   $("modal").addEventListener("click", (e) => { if (e.target.id === "modal") $("modal").hidden = true; });
 
@@ -615,16 +615,19 @@ main.collapsed .expand:hover { color: var(--accent); }
     }
     return { ranges: [pick], original: code.slice(pick.start, pick.end) };
   }
+  let programmaticInput = false;
   function replaceRanges(ranges, text) {
     const sorted = [...ranges].sort((a, b) => b.start - a.start);
     const top = stage.scrollTop, left = stage.scrollLeft, editorTop = src.scrollTop, editorLeft = src.scrollLeft;
     src.focus({ preventScroll: true });
     let ok = true;
+    programmaticInput = true; // この入力は図の上からの変更なので、履歴を消さない
     for (const r of sorted) {
       src.setSelectionRange(r.start, r.end);
       try { ok = document.execCommand("insertText", false, text) && ok; } catch (e) { ok = false; }
       if (!ok) break;
     }
+    programmaticInput = false;
     if (!ok) {
       let v = src.value;
       for (const r of sorted) v = v.slice(0, r.start) + text + v.slice(r.end);
@@ -646,18 +649,13 @@ main.collapsed .expand:hover { color: var(--accent); }
     if (!/^\s*note\b/i.test(line)) return null;
     return { start: s, end: e < 0 ? code.length : e + 1 };
   }
-  // 図の文字を Backspace／Delete で消す前のコード（Ctrl+Z で戻す）
-  const codeHistory = [];
-  function undoCode() {
-    const last = codeHistory[codeHistory.length - 1];
-    // 消した後にコードを打ち直していたら、戻すと打った分が消えるので戻さない
-    if (!last || last.after !== src.value) { codeHistory.length = 0; return flash("戻せる文字の削除はありません"); }
-    codeHistory.pop();
-    src.value = last.before;
+  // 履歴（Ctrl+Z／Ctrl+Y）からコードを戻す・やり直す
+  function setCode(value) {
+    src.value = value;
     shareChanged();
     notifyParent("snap:dirty");
     clearTimeout(t);
-    render().then(() => flash("消した文字を戻しました", "ok"));
+    render();
   }
   let editing = null;
   function openEditor(textEl, target, rectOverride) {
@@ -717,8 +715,8 @@ main.collapsed .expand:hover { color: var(--accent); }
     input.remove();
     const value = input.value.replace(/\n/g, "<br>");
     if (commit && value !== target.original && input.value !== input.dataset.initial) {
-      const n = target.ranges.length, orig = target.original;
-      replaceRanges(target.ranges, value).then(() => flash(n > 1 ? `「${orig}」を${n}か所変更しました` : "コードに反映しました", "ok"));
+      const n = target.ranges.length, orig = target.original, before = src.value;
+      replaceRanges(target.ranges, value).then(() => routes.pushCode(before, src.value)).then(() => flash(n > 1 ? `「${orig}」を${n}か所変更しました` : "コードに反映しました", "ok"));
     }
   }
   stage.addEventListener("dblclick", (e) => {
@@ -821,7 +819,17 @@ main.collapsed .expand:hover { color: var(--accent); }
     // 変更の履歴。1 回の操作 = [{ kind, key, from, to }]
     //   kind "route"：線の d の文字列（元の経路は null）
     //   kind "align"：文字を中央にそろえているか（true / false）
-    let undoStack = [], redoStack = [];
+    let undoStack = [], redoStack = [], resetPending = false;
+    // 次に描いたときに履歴を消す（別の図を読み込んだとき・コード欄に打ち込んだとき・テーマを変えたとき）
+    function clearHistory() { resetPending = true; }
+    // 図の上での文字の書き換え・削除（コードの変更）を、線や表の変更と同じ履歴に積む
+    function pushCode(before, after) {
+      if (before === after) return;
+      undoStack.push([{ kind: "code", key: "code", from: before, to: after }]);
+      if (undoStack.length > 200) undoStack.shift();
+      redoStack = [];
+      updateButtons();
+    }
     // 選んでいる文字（text 要素）
     let selected = [];
 
@@ -841,8 +849,9 @@ main.collapsed .expand:hover { color: var(--accent); }
       svgEl = el; stroke = null; hoverEdge = null; selected = [];
       if (!el) { updateButtons(); return; }
       const nextKey = hash($("theme").value + "\n" + code);
-      // 別の図になったら履歴は使えないので消す（同じ図の描き直しなら残す）
-      if (nextKey !== diagramKey) { undoStack = []; redoStack = []; }
+      // 履歴は、別の図を読み込んだときや、コード欄に打ち込んだとき（clearHistory）にだけ消す。
+      // 図の上での文字の書き換え・削除でコードが変わったときは、その変更も履歴に入っているので残す
+      if (resetPending) { undoStack = []; redoStack = []; resetPending = false; }
       diagramKey = nextKey;
       const saved = readAll()[diagramKey] || {};
       edges().forEach((p, i) => {
@@ -935,6 +944,7 @@ main.collapsed .expand:hover { color: var(--accent); }
     }
 
     function setState(c, value) {
+      if (c.kind === "code") return setCode(value);
       if (c.kind === "align") setAlign(c.key, value);
       else if (c.kind === "move") setMove(c.key, value);
       else if (c.kind === "node" || c.kind === "cluster") layout.set(c.key, value);
@@ -1434,11 +1444,11 @@ main.collapsed .expand:hover { color: var(--accent); }
       if (e.key === "Escape" && stroke) { end(e, true); return; }
       if (e.key === "Escape" && selected.length) { select([]); return; }
       // Ctrl+Z で 1 つ戻す、Ctrl+Y／Ctrl+Shift+Z でやり直す。コードの欄や入力欄の中では、そちらの取り消しを使う
+      // （テーマ・画質・補正の選択欄にいるときは、選択欄には取り消しが無いので、図の履歴を使う）
       const tag = (document.activeElement && document.activeElement.tagName) || "";
-      if (!(e.ctrlKey || e.metaKey) || e.altKey || stroke || /^(TEXTAREA|INPUT|SELECT)$/.test(tag)) return;
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || stroke || /^(TEXTAREA|INPUT)$/.test(tag)) return;
       const k = e.key.toLowerCase();
-      // コードを変えると線の履歴は消えるので、そのときは文字を消す前のコードに戻す
-      if (k === "z" && !e.shiftKey) { e.preventDefault(); if (undoStack.length || !codeHistory.length) undo(); else undoCode(); }
+      if (k === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
       else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
     });
 
@@ -1577,8 +1587,7 @@ main.collapsed .expand:hover { color: var(--accent); }
       const before = src.value;
       select([]);
       await replaceRanges(ranges, "");
-      codeHistory.push({ before, after: src.value });
-      if (codeHistory.length > 50) codeHistory.shift();
+      pushCode(before, src.value);
       flash(`${notes.size ? `note を ${notes.size} 個` :`${ranges.length} か所の文字を`}消しました（Ctrl+Z で戻せます）${missing ? `。${missing} か所はコードで見つからず残しました` : ""}`, "ok");
     });
 
@@ -1688,18 +1697,22 @@ main.collapsed .expand:hover { color: var(--accent); }
     stage.addEventListener("pointerup", (e) => endBox(e, false), true);
     stage.addEventListener("pointercancel", (e) => endBox(e, true), true);
 
-    return { prepare, importLayout, currentLayout };
+    return { prepare, importLayout, currentLayout, clearHistory, pushCode, undo, redo };
   })();
 
   $("zoomIn").addEventListener("click", () => zoomAt(1.25));
   $("zoomOut").addEventListener("click", () => zoomAt(0.8));
   $("zoomFit").addEventListener("click", () => { zoom = 0; applyZoom(); });
 
-  $("theme").addEventListener("change", () => { init(); render(); shareChanged(); });
+  $("theme").addEventListener("change", () => { routes.clearHistory(); init(); render(); shareChanged(); });
   $("scale").addEventListener("change", save);
   $("transparent").addEventListener("change", save);
 
-  src.addEventListener("input", () => { scheduleRender(); shareChanged(); notifyParent("snap:dirty"); });
+  src.addEventListener("input", () => {
+    // コード欄に打ち込んだときは、図の上での変更の履歴と合わなくなるので消す（コード欄の中の Ctrl+Z は今までどおり使える）
+    if (!programmaticInput) routes.clearHistory();
+    scheduleRender(); shareChanged(); notifyParent("snap:dirty");
+  });
   src.addEventListener("keydown", (e) => {
     if (e.key === "Tab") {
       e.preventDefault();
@@ -1741,11 +1754,15 @@ main.collapsed .expand:hover { color: var(--accent); }
           $("scale").value = sc;
           init();
           routes.importLayout(theme, clean(d.code || "").trim(), d.layout || null);
-          codeHistory.length = 0;
+          routes.clearHistory();
           src.value = d.code || "";
           zoom = 0;
           await render();
           reply("snap:loaded", { ok: !err.classList.contains("show"), error: err.classList.contains("show") ? err.textContent : "" });
+        } else if (d.type === "snap:undo") {
+          routes.undo();
+        } else if (d.type === "snap:redo") {
+          routes.redo();
         } else if (d.type === "snap:export") {
           if (!lastSvg || err.classList.contains("show")) return reply("snap:exported", { ok: false, error: err.textContent || "図がありません" });
           const b = await pngBlob();

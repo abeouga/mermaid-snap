@@ -56,8 +56,7 @@ details { margin: 0; }
 summary { cursor: pointer; padding: 3px 8px; list-style-position: inside; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 summary:hover { background: var(--sel); }
 details.dir > summary { font-weight: 700; }
-details.file > summary { padding-left: 20px; }
-details.file > summary .n { color: var(--muted); font-size: 12px; margin-left: 4px; }
+summary .n { color: var(--muted); font-size: 12px; font-weight: 400; margin-left: 4px; }
 .item { display: flex; gap: 6px; align-items: baseline; width: 100%; text-align: left; border: 0; border-radius: 0; background: transparent; padding: 3px 8px 3px 40px; }
 .item:hover { background: var(--sel); }
 .item[aria-current="true"] { background: var(--sel); box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
@@ -93,14 +92,6 @@ iframe { flex: 1; width: 100%; border: 0; min-height: 0; background: var(--bg); 
   <div class="filters">
     <div class="row">
       <input id="q" type="search" placeholder="ファイル名・見出しで絞り込む" aria-label="絞り込み">
-    </div>
-    <div class="row">
-      <select id="scope" aria-label="フォルダー"><option value="">すべてのフォルダー</option></select>
-      <select id="state" aria-label="状態">
-        <option value="">すべて</option>
-        <option value="nopng">PNG なし</option>
-        <option value="todo">この回でまだ保存していない</option>
-      </select>
     </div>
     <div class="row">
       <button id="foldAll" type="button" title="一覧のフォルダーとファイルをすべて閉じる（今の図のファイルだけは開いたまま）">すべて閉じる</button>
@@ -176,61 +167,88 @@ iframe { flex: 1; width: 100%; border: 0; min-height: 0; background: var(--bg); 
   }
 
   function filtered() {
-    const q = $("q").value.trim().toLowerCase(), scope = $("scope").value, st = $("state").value;
-    return pages.filter((p) => {
-      if (scope && topDir(p.file) !== scope) return false;
-      if (st === "nopng" && p.hasPng) return false;
-      if (st === "todo" && doneSet()[p.id]) return false;
-      if (q && !(p.file + " " + p.heading).toLowerCase().includes(q)) return false;
-      return true;
-    });
+    const q = $("q").value.trim().toLowerCase();
+    return pages.filter((p) => !q || (p.file + " " + p.heading).toLowerCase().includes(q));
   }
+
+  // 一覧は、フォルダー → ファイル → 図 の木にする。ただし、
+  //   ・中身がファイル 1 つだけのフォルダーは、フォルダーの段を作らずにファイルをそのまま並べる
+  //   ・図が 1 つだけのファイルは、ファイルを開く段を作らずに、ファイル名の行を押すとその図を開く
+  //   ・名前はその段の名前だけ（パスや .md は書かない）
+  const baseName = (f) => f.split("/").pop().replace(/\.md$/i, "");
+  function buildTree(list) {
+    const root = { name: "", path: "", dirs: new Map(), files: new Map() };
+    list.forEach((p) => {
+      const parts = p.file.split("/");
+      parts.pop();
+      let node = root;
+      parts.forEach((seg) => {
+        if (!node.dirs.has(seg)) node.dirs.set(seg, { name: seg, path: node.path + seg + "/", dirs: new Map(), files: new Map() });
+        node = node.dirs.get(seg);
+      });
+      if (!node.files.has(p.file)) node.files.set(p.file, []);
+      node.files.get(p.file).push(p);
+    });
+    return root;
+  }
+  const countOf = (n) => [...n.dirs.values()].reduce((s, c) => s + countOf(c), 0) + [...n.files.values()].reduce((s, l) => s + l.length, 0);
+  const indent = (el, depth, base) => { el.style.paddingLeft = (base + depth * 14) + "px"; };
 
   function renderTree() {
     visible = filtered();
     const tree = $("tree");
-    const openDirs = new Set([...tree.querySelectorAll("details[open]")].map((d) => d.dataset.key));
+    const openKeys = new Set([...tree.querySelectorAll("details[open]")].map((d) => d.dataset.key));
     tree.textContent = "";
-    const byDir = new Map();
-    visible.forEach((p) => {
-      const dir = topDir(p.file);
-      if (!byDir.has(dir)) byDir.set(dir, new Map());
-      const files = byDir.get(dir);
-      if (!files.has(p.file)) files.set(p.file, []);
-      files.get(p.file).push(p);
-    });
-    const filtering = !!($("q").value.trim() || $("state").value);
-    for (const [dir, files] of byDir) {
-      const dd = document.createElement("details");
-      dd.className = "dir"; dd.dataset.key = "d:" + dir;
-      const total = [...files.values()].reduce((n, l) => n + l.length, 0);
-      dd.innerHTML = `<summary></summary>`;
-      dd.firstChild.textContent = `${dir}（${total}）`;
-      for (const [file, list] of files) {
-        const fd = document.createElement("details");
-        fd.className = "file"; fd.dataset.key = "f:" + file;
-        const sm = document.createElement("summary");
-        sm.textContent = file.split("/").slice(1).join("/") || file;
-        const n = document.createElement("span"); n.className = "n"; n.textContent = `${list.length}`;
-        sm.appendChild(n); sm.title = file;
-        fd.appendChild(sm);
-        list.forEach((p) => {
-          const b = document.createElement("button");
-          b.type = "button"; b.className = "item"; b.dataset.id = p.id;
-          if (current && current.id === p.id) { b.setAttribute("aria-current", "true"); fd.open = true; dd.open = true; }
-          const t = document.createElement("span"); t.className = "t";
-          t.textContent = `${p.index}. ${p.heading || "（見出しなし）"}`;
-          b.title = `${p.file} の ${p.index}/${p.count} 番目の図`;
-          b.append(markEl(p.id), t);
-          b.addEventListener("click", () => open(p.id));
-          fd.appendChild(b);
-        });
-        if (openDirs.has(fd.dataset.key) || filtering) fd.open = true;
-        dd.appendChild(fd);
-      }
-      if (openDirs.has(dd.dataset.key) || filtering) dd.open = true;
-      tree.appendChild(dd);
+    const filtering = !!$("q").value.trim();
+    const isCurrent = (p) => current && current.id === p.id;
+
+    function itemEl(p, label, depth, title) {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "item"; b.dataset.id = p.id;
+      if (isCurrent(p)) b.setAttribute("aria-current", "true");
+      const t = document.createElement("span"); t.className = "t";
+      t.textContent = label;
+      b.title = title;
+      b.append(markEl(p.id), t);
+      b.addEventListener("click", () => open(p.id));
+      indent(b, depth, 8);
+      return b;
     }
+    function group(key, label, n, depth, cls) {
+      const d = document.createElement("details");
+      d.className = cls; d.dataset.key = key;
+      const sm = document.createElement("summary");
+      sm.textContent = label;
+      const c = document.createElement("span"); c.className = "n"; c.textContent = String(n);
+      sm.appendChild(c);
+      indent(sm, depth, 8);
+      d.appendChild(sm);
+      if (openKeys.has(key) || filtering) d.open = true;
+      return d;
+    }
+    // フォルダーの中身（フォルダーとファイル）を parent に並べる
+    function renderDir(node, parent, depth) {
+      for (const child of node.dirs.values()) {
+        // 中身がファイル 1 つだけのフォルダーは段を作らない（フォルダーが 1 つだけのときは、どこのフォルダーか分からなくなるので段を残す）
+        if (child.dirs.size === 0 && child.files.size === 1) { renderDir(child, parent, depth); continue; }
+        const d = group("d:" + child.path, child.name, countOf(child), depth, "dir");
+        renderDir(child, d, depth + 1);
+        if (d.querySelector('.item[aria-current="true"]')) d.open = true;
+        parent.appendChild(d);
+      }
+      for (const [file, list] of node.files) {
+        if (list.length === 1) {
+          parent.appendChild(itemEl(list[0], baseName(file), depth, `${file}${list[0].heading ? "　" + list[0].heading : ""}`));
+          continue;
+        }
+        const d = group("f:" + file, baseName(file), list.length, depth, "file");
+        d.querySelector("summary").title = file;
+        list.forEach((p) => d.appendChild(itemEl(p, `${p.index}. ${p.heading || "（見出しなし）"}`, depth + 1, `${file} の ${p.index}/${p.count} 番目の図`)));
+        if (d.querySelector('.item[aria-current="true"]')) d.open = true;
+        parent.appendChild(d);
+      }
+    }
+    renderDir(buildTree(visible), tree, 0);
     const saved = pages.filter((p) => doneSet()[p.id]).length;
     $("count").textContent = `${visible.length} / ${pages.length} 個の図を表示　この回で保存 ${saved} 個`;
     const cur = tree.querySelector('.item[aria-current="true"]');
@@ -333,11 +351,17 @@ iframe { flex: 1; width: 100%; border: 0; min-height: 0; background: var(--bg); 
   $("unfoldAll").addEventListener("click", () => {
     document.querySelectorAll("#tree details").forEach((d) => { d.open = true; });
   });
-  ["q", "scope", "state"].forEach((id) => $(id).addEventListener("input", () => { renderTree(); updateNav(); }));
+  $("q").addEventListener("input", () => { renderTree(); updateNav(); });
   document.addEventListener("keydown", (e) => {
     const mod = e.ctrlKey || e.metaKey;
     if (mod && e.key === "Enter") { e.preventDefault(); if (e.shiftKey) go(-1); else saveAndGo(1); }
     else if (mod && (e.key === "s" || e.key === "S")) { e.preventDefault(); saveAndGo(0); }
+    // 一覧や上のボタンを触った後も、Ctrl+Z／Ctrl+Y／Ctrl+Shift+Z を編集画面に渡す（絞り込みの入力欄の中では、そちらの取り消しを使う）
+    else if (mod && !e.altKey && /^[zy]$/i.test(e.key) && !/^(INPUT|TEXTAREA)$/.test((document.activeElement || {}).tagName || "")) {
+      e.preventDefault();
+      const redo = e.key.toLowerCase() === "y" || e.shiftKey;
+      frame.contentWindow.postMessage({ type: redo ? "snap:redo" : "snap:undo" }, location.origin);
+    }
   });
   window.addEventListener("beforeunload", (e) => { if (dirty) { e.preventDefault(); e.returnValue = ""; } });
 
@@ -366,10 +390,6 @@ iframe { flex: 1; width: 100%; border: 0; min-height: 0; background: var(--bg); 
     branch = l.branch || "";
     $("branch").textContent = branch ? "ブランチ " + branch : "ブランチ不明";
     $("branch").title = l.repo;
-    const keep = $("scope").value;
-    $("scope").length = 1;
-    [...new Set(pages.map((p) => topDir(p.file)))].forEach((d) => $("scope").add(new Option(d, d)));
-    $("scope").value = [...$("scope").options].some((o) => o.value === keep) ? keep : "";
     renderTree();
     updateNav();
   }
