@@ -93,10 +93,6 @@ iframe { flex: 1; width: 100%; border: 0; min-height: 0; background: var(--bg); 
     <div class="row">
       <input id="q" type="search" placeholder="ファイル名・見出しで絞り込む" aria-label="絞り込み">
     </div>
-    <div class="row">
-      <button id="foldAll" type="button" title="一覧のフォルダーとファイルをすべて閉じる（今の図のファイルだけは開いたまま）">すべて閉じる</button>
-      <button id="unfoldAll" type="button" title="一覧のフォルダーとファイルをすべて開く">すべて開く</button>
-    </div>
     <span class="count" id="count"></span>
   </div>
   <div id="tree" role="navigation" aria-label="図の一覧"></div>
@@ -344,13 +340,6 @@ iframe { flex: 1; width: 100%; border: 0; min-height: 0; background: var(--bg); 
   $("sideCollapse").addEventListener("click", () => { setSide(true); $("sideExpand").focus(); });
   $("sideExpand").addEventListener("click", () => { setSide(false); const c = document.querySelector('.item[aria-current="true"]'); if (c) c.scrollIntoView({ block: "nearest" }); });
   try { setSide(localStorage.getItem(SIDE_KEY) === "1"); } catch (e) {}
-  // 一覧は消さずに、フォルダーとファイルの開き閉じだけを変える。閉じても今の図のファイルは開いたままにする
-  $("foldAll").addEventListener("click", () => {
-    document.querySelectorAll("#tree details").forEach((d) => { d.open = !!d.querySelector('.item[aria-current="true"]'); });
-  });
-  $("unfoldAll").addEventListener("click", () => {
-    document.querySelectorAll("#tree details").forEach((d) => { d.open = true; });
-  });
   $("q").addEventListener("input", () => { renderTree(); updateNav(); });
   document.addEventListener("keydown", (e) => {
     const mod = e.ctrlKey || e.metaKey;
