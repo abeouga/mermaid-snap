@@ -345,7 +345,16 @@ main.collapsed .expand:hover { color: var(--accent); }
   function applyZoom() {
     const svgEl = out.querySelector("svg");
     if (!svgEl) return;
-    if (zoom === 0) { out.classList.add("fit"); svgEl.style.width = ""; return; }
+    // 「全体表示」：表示欄の幅に入る大きさを px で決める（元の大きさより大きくはしない）。
+    // width="100%" のままだと、包む #out と互いの幅を待って決まらず、ブラウザーの既定の 300px になる
+    if (zoom === 0) {
+      out.classList.add("fit");
+      const pad = parseFloat(getComputedStyle(out).paddingLeft) + parseFloat(getComputedStyle(out).paddingRight);
+      const room = $("stage").clientWidth - pad;
+      const w = svgSize(svgEl).w;
+      svgEl.style.width = room > 0 && w ? Math.min(w, room) + "px" : "";
+      return;
+    }
     out.classList.remove("fit");
     svgEl.style.width = (svgSize(svgEl).w * zoom) + "px";
   }
@@ -455,6 +464,8 @@ main.collapsed .expand:hover { color: var(--accent); }
 
   // 指定した画面上の点（cx, cy）を固定したまま倍率を変える
   const stage = $("stage");
+  // 「全体表示」のときは、表示欄の大きさが変わったら（窓の大きさ・一覧の折りたたみ）合わせ直す
+  new ResizeObserver(() => { if (zoom === 0) applyZoom(); }).observe(stage);
   function zoomAt(factor, cx, cy) {
     const svgEl = out.querySelector("svg");
     if (!svgEl) return;
