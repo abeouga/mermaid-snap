@@ -133,6 +133,7 @@ main.collapsed .expand:hover { color: var(--accent); }
 #out svg path.snap-edge-hover { stroke: #e8590c !important; }
 #out svg path.snap-edge-dim { opacity: .25; }
 #out svg text.snap-selected, #out svg text.snap-selected tspan { fill: #e8590c !important; }
+#out svg rect.note.snap-selected { stroke: #e8590c !important; stroke-width: 2px !important; }
 /* 線のラベルと多重度はドラッグで動かせる */
 #out svg g.edgeLabel, #out svg g.edgeLabel text, #out svg g.edgeTerminals, #out svg g.edgeTerminals text { cursor: move; }
 .stage.moving, .stage.moving svg text { cursor: grabbing; }
@@ -597,6 +598,14 @@ main.collapsed .expand:hover { color: var(--accent); }
     src.scrollTop = editorTop;
     src.scrollLeft = editorLeft;
     return render().then(() => { stage.scrollTop = top; stage.scrollLeft = left; });
+  }
+  // 範囲 r が note の行（シーケンス図の Note …、クラス図の note …）の中なら、その行全体（改行まで）の範囲を返す
+  function noteLine(code, r) {
+    const s = code.lastIndexOf("\n", r.start - 1) + 1;
+    let e = code.indexOf("\n", r.end);
+    const line = code.slice(s, e < 0 ? code.length : e);
+    if (!/^\s*note\b/i.test(line)) return null;
+    return { start: s, end: e < 0 ? code.length : e + 1 };
   }
   // 図の文字を Backspace／Delete で消す前のコード（Ctrl+Z で戻す）
   const codeHistory = [];
@@ -1342,8 +1351,13 @@ main.collapsed .expand:hover { color: var(--accent); }
     // 図の文字をクリックで選ぶ（Ctrl+クリック（または Shift+クリック）で足す・外す）。図を動かした（ドラッグした）ときは選ばない
     function select(list) {
       selected.forEach((t) => t.classList.remove("snap-selected"));
+      if (svgEl) svgEl.querySelectorAll("rect.snap-selected").forEach((r) => r.classList.remove("snap-selected"));
       selected = list;
-      selected.forEach((t) => t.classList.add("snap-selected"));
+      selected.forEach((t) => {
+        t.classList.add("snap-selected");
+        const r = t.parentNode && t.parentNode.querySelector(":scope > rect.note");
+        if (r) r.classList.add("snap-selected");
+      });
       updateButtons();
     }
     let down = null;
@@ -1359,6 +1373,16 @@ main.collapsed .expand:hover { color: var(--accent); }
           const r = x.getBoundingClientRect();
           return r.width && e.clientX >= r.left - pad && e.clientX <= r.right + pad && e.clientY >= r.top - pad && e.clientY <= r.bottom + pad;
         }) || null;
+      }
+      // note は、文字か枠をクリックすると、その note の文字をまとめて選ぶ（Backspace／Delete で note ごと消せる）
+      const noteRect = hit && out.contains(hit) && (hit.matches("rect.note") ? hit : (t && t.parentNode && t.parentNode.querySelector(":scope > rect.note")));
+      if (noteRect) {
+        const texts = [...noteRect.parentNode.querySelectorAll(":scope > text[data-snap-key]")];
+        if (e.ctrlKey || e.metaKey || e.shiftKey) {
+          const on = texts.every((x) => selected.includes(x));
+          select(on ? selected.filter((x) => !texts.includes(x)) : [...selected, ...texts.filter((x) => !selected.includes(x))]);
+        } else select(texts);
+        return;
       }
       if (t && !t.dataset.snapKey) return;
       if (e.ctrlKey || e.metaKey || e.shiftKey) {
@@ -1384,6 +1408,7 @@ main.collapsed .expand:hover { color: var(--accent); }
       e.preventDefault();
       const all = [];
       let missing = 0;
+      const notes = new Set(); // 消す note の行（行の始まりの位置）
       const code0 = src.value;
       // 複数行の文字の 1 行だけを消すときは、上の行の終わりの改行（<br>）も消して、空の行を残さない。
       // 上の行が無い（1 行目を消す）ときは、下の行との間の <br> を消す
@@ -1399,7 +1424,9 @@ main.collapsed .expand:hover { color: var(--accent); }
         const tg = findTarget(t);
         if (!tg) { missing++; return; }
         const rs = tg.ranges.length > 1 ? tg.ranges.filter((r) => !partOfFile(r)) : tg.ranges;
-        all.push(...rs.map(withBr));
+        // note（Note over A,B: … や note for X "…"）は、文字だけでなく、その行を丸ごと消す
+        all.push(...rs.map((r) => noteLine(code0, r) || withBr(r)));
+        rs.forEach((r) => { const n = noteLine(code0, r); if (n) notes.add(n.start); });
       });
       // 重なる範囲・つながる範囲は 1 つにまとめる
       const ranges = [];
@@ -1446,7 +1473,7 @@ main.collapsed .expand:hover { color: var(--accent); }
       await replaceRanges(ranges, "");
       codeHistory.push({ before, after: src.value });
       if (codeHistory.length > 50) codeHistory.shift();
-      flash(`${ranges.length} か所の文字を消しました（Ctrl+Z で戻せます）${missing ? `。${missing} か所はコードで見つからず残しました` : ""}`, "ok");
+      flash(`${notes.size ? `note を ${notes.size} 個` :`${ranges.length} か所の文字を`}消しました（Ctrl+Z で戻せます）${missing ? `。${missing} か所はコードで見つからず残しました` : ""}`, "ok");
     });
 
     $("drawMode").addEventListener("click", () => setMode(!mode));
