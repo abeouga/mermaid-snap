@@ -522,7 +522,9 @@ main.collapsed .expand:hover { color: var(--accent); }
   // <br> で改行すると行ごとに別の text 要素になる図（シーケンス図など）があるので、
   // 同じ場所に縦に並んだ兄弟の text をまとめて1つのラベルとして扱う
   function textGroup(textEl) {
-    const same = (a, b) => a && a.tagName === "text" && b.getAttribute("class") === a.getAttribute("class") &&
+    // 選んだ印（snap-selected など）はクラスに入っても比べない
+    const cls = (e) => (e.getAttribute("class") || "").split(/\s+/).filter((c) => c && !c.startsWith("snap-")).sort().join(" ");
+    const same = (a, b) => a && a.tagName === "text" && cls(b) === cls(a) &&
       b.getAttribute("x") === a.getAttribute("x") && labelLines(a).length;
     const near = (a, b) => Math.abs(parseFloat(a.getAttribute("y") || 0) - parseFloat(b.getAttribute("y") || 0)) <= 40;
     const group = [textEl];
@@ -537,8 +539,45 @@ main.collapsed .expand:hover { color: var(--accent); }
     const right = Math.max(...rs.map((r) => r.right)), bottom = Math.max(...rs.map((r) => r.bottom));
     return { left, top, width: right - left, height: bottom - top };
   }
+  // シーケンス図の囲い（alt・opt・break・loop など）の条件の文字。
+  // Mermaid は条件を [ ] で囲み、長いと単語の途中に - を入れて折り返して描くので、それを外してコードと比べる
+  const FRAGMENT_KW = "alt|else|opt|loop|break|par|and|critical|option";
+  function findFragmentTarget(textEl, tg) {
+    const lines = groupLines(tg);
+    if (!lines.length) return null;
+    lines[0] = lines[0].replace(/^\[/, "");
+    lines[lines.length - 1] = lines[lines.length - 1].replace(/\]$/, "");
+    const words = (l) => l.split(/\s+/).filter(Boolean).map(reEsc).join("\\s+");
+    let body = "";
+    lines.forEach((l, i) => {
+      if (i === lines.length - 1) { body += words(l); return; }
+      const wrapped = /-$/.test(l); // Mermaid が入れた折り返しの -（元から - だったこともある）
+      body += words(wrapped ? l.slice(0, -1) : l) + (wrapped ? "-?" : "") + "(?:\\s*<br\\s*/?>\\s*|\\s*)";
+    });
+    if (!body) return null;
+    const code = src.value;
+    const matches = allMatches(new RegExp(`(^[ \\t]*(?:${FRAGMENT_KW})[ \\t]+)(${body})[ \\t]*$`, "gim"), code)
+      .map((r) => { const m = code.slice(r.start, r.end).match(new RegExp(`^([ \\t]*(?:${FRAGMENT_KW})[ \\t]+)(${body})`, "i")); return m ? { start: r.start + m[1].length, end: r.start + m[1].length + m[2].length } : null; })
+      .filter(Boolean);
+    if (!matches.length) return null;
+    // 同じ条件が何か所もあるときは、図の中で何番目かに合わせる
+    const key = lines.join("\n");
+    const seen = new Set(), same = [];
+    for (const t of out.querySelectorAll("svg text.loopText")) {
+      if (seen.has(t)) continue;
+      const g = textGroup(t);
+      g.forEach((x) => seen.add(x));
+      const ls = groupLines(g);
+      if (!ls.length) continue;
+      ls[0] = ls[0].replace(/^\[/, ""); ls[ls.length - 1] = ls[ls.length - 1].replace(/\]$/, "");
+      if (ls.join("\n") === key) same.push(g[0]);
+    }
+    const pick = matches[Math.min(Math.max(0, same.indexOf(tg[0])), matches.length - 1)];
+    return { ranges: [pick], original: code.slice(pick.start, pick.end) };
+  }
   function findTarget(textEl) {
     const tg = textGroup(textEl);
+    if (textEl.classList.contains("loopText")) return findFragmentTarget(textEl, tg);
     const lines = groupLines(tg);
     if (!lines.length) return null;
     const code = src.value;
@@ -621,9 +660,9 @@ main.collapsed .expand:hover { color: var(--accent); }
     render().then(() => flash("消した文字を戻しました", "ok"));
   }
   let editing = null;
-  function openEditor(textEl, target) {
+  function openEditor(textEl, target, rectOverride) {
     closeEditor(false);
-    const rect = groupRect(textGroup(textEl));
+    const rect = rectOverride || groupRect(textGroup(textEl));
     const input = document.createElement("textarea");
     input.id = "inlineEdit";
     input.rows = 1;
@@ -703,6 +742,61 @@ main.collapsed .expand:hover { color: var(--accent); }
     const target = findTarget(textEl);
     if (!target) return flash("この文字はコードの中で見つかりませんでした", "bad");
     openEditor(textEl, target);
+  });
+
+  // ---- シーケンス図の矢印をクリックして、その矢印の文字を書く・書き換える ----
+  // 文字を全部消した矢印にも書けるようにする。矢印は、コードのメッセージの行と同じ順に描かれる
+  const MESSAGE_RE = /^([ \t]*)(?!(?:note|participant|actor|activate|deactivate|create|destroy|links?|properties|details|autonumber|title|box|end|alt|else|opt|loop|break|par|and|critical|option|rect)\b)([^\n:]+?)[ \t]*(<<-->>|<<->>|-->>|->>|--x|-x|--\)|-\)|-->|->)[ \t]*[+-]?[ \t]*([^\n:]+?)[ \t]*:([^\n]*)$/gim;
+  function messageLines(code) {
+    const list = [];
+    let m;
+    MESSAGE_RE.lastIndex = 0;
+    while ((m = MESSAGE_RE.exec(code))) {
+      const colon = m.index + m[0].length - m[5].length; // ':' の直後
+      const lead = m[5].match(/^[ \t]*/)[0].length;
+      const text = m[5].slice(lead).replace(/[ \t]+$/, "");
+      list.push({ start: colon + lead, end: colon + lead + text.length, text, colon });
+    }
+    return list;
+  }
+  // 画面の点に一番近い矢印（8px 以内）
+  function messageArrowAt(cx, cy) {
+    const svgEl = out.querySelector("svg");
+    if (!svgEl || !svgEl.getAttribute("aria-roledescription")?.includes("sequence")) return null;
+    const arrows = [...svgEl.querySelectorAll(".messageLine0, .messageLine1")];
+    let best = null, bestD = 8;
+    arrows.forEach((el, i) => {
+      const r = el.getBoundingClientRect();
+      if (cx < r.left - bestD || cx > r.right + bestD || cy < r.top - bestD || cy > r.bottom + bestD) return;
+      let d;
+      if (el.tagName === "line") {
+        const m = el.getScreenCTM();
+        const p = (x, y) => new DOMPoint(x, y).matrixTransform(m);
+        const a = p(+el.getAttribute("x1"), +el.getAttribute("y1")), b = p(+el.getAttribute("x2"), +el.getAttribute("y2"));
+        const dx = b.x - a.x, dy = b.y - a.y, len = dx * dx + dy * dy || 1;
+        const t = Math.max(0, Math.min(1, ((cx - a.x) * dx + (cy - a.y) * dy) / len));
+        d = Math.hypot(cx - (a.x + t * dx), cy - (a.y + t * dy));
+      } else d = 0; // 自分への矢印（曲線）は、囲む四角の中なら当たりにする
+      if (d < bestD) { bestD = d; best = { el, index: i, count: arrows.length }; }
+    });
+    return best;
+  }
+  let arrowDown = null;
+  stage.addEventListener("pointerdown", (e) => { arrowDown = { x: e.clientX, y: e.clientY }; }, true);
+  stage.addEventListener("click", (e) => {
+    if (!arrowDown || Math.hypot(e.clientX - arrowDown.x, e.clientY - arrowDown.y) > 4) return;
+    if (stage.classList.contains("draw-mode") || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const hit = document.elementFromPoint(e.clientX, e.clientY);
+    if (hit && hit.closest && hit.closest("text")) return; // 文字の上は、今までどおり文字を選ぶ
+    const a = messageArrowAt(e.clientX, e.clientY);
+    if (!a) return;
+    const list = messageLines(src.value);
+    if (list.length !== a.count) return flash("この矢印がコードのどの行か分かりませんでした", "bad");
+    const msg = list[a.index];
+    const r = a.el.getBoundingClientRect();
+    // 矢印の少し上に入力欄を出す（文字はふつう矢印の上に描かれる）
+    const rect = { left: r.left, top: r.top - 44, width: Math.max(r.width, 40), height: 20 };
+    openEditor(a.el, { ranges: [{ start: msg.start, end: msg.end }], original: msg.text, arrow: true }, rect);
   });
   // ---- 線を手で描く ----
   // 「線を描く」を押してから線の上でドラッグすると、ドラッグの間その経路が描かれる。
@@ -1420,9 +1514,21 @@ main.collapsed .expand:hover { color: var(--accent); }
       };
       // 名前は同じ名前を全部消すが、ファイル名の一部（(Page.jsx) の Page など）は別の文字なので消さない
       const partOfFile = (r) => /[.(\/]/.test(code0[r.start - 1] || "") || /[.)\/]/.test(code0[r.end] || "");
+      // 囲いの条件を <br> で分けて書いているときは、選んだ行だけを消す（Mermaid が自動で折り返した行は、条件全体を消す）
+      const fragmentLine = (t, r) => {
+        const g = textGroup(t);
+        if (!t.classList.contains("loopText") || g.length < 2) return r;
+        const segs = [];
+        const text = code0.slice(r.start, r.end), re = /\s*<br\s*\/?>\s*/gi;
+        let last = 0, m;
+        while ((m = re.exec(text))) { segs.push({ start: r.start + last, end: r.start + m.index }); last = m.index + m[0].length; }
+        segs.push({ start: r.start + last, end: r.end });
+        return segs.length === g.length ? segs[g.indexOf(t)] : r;
+      };
       selected.forEach((t) => {
         const tg = findTarget(t);
         if (!tg) { missing++; return; }
+        if (t.classList.contains("loopText")) tg.ranges = tg.ranges.map((r) => fragmentLine(t, r));
         const rs = tg.ranges.length > 1 ? tg.ranges.filter((r) => !partOfFile(r)) : tg.ranges;
         // note（Note over A,B: … や note for X "…"）は、文字だけでなく、その行を丸ごと消す
         all.push(...rs.map((r) => noteLine(code0, r) || withBr(r)));
