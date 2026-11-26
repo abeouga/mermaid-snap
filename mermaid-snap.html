@@ -601,7 +601,16 @@ main.collapsed .expand:hover { color: var(--accent); }
       const ranges = allMatches(new RegExp("(?<![\\w\\u3040-\\u9fff])" + w + "(?![\\w\\u3040-\\u9fff])", "g"), code);
       return ranges.length ? { ranges, original: lines[0] } : null;
     }
-    const matches = allMatches(labelRegex(lines), code);
+    // 線の文字（g.edgeLabel）は、線の行（-- .. -> == -. を含む行）の、ほかの単語の一部ではない所だけを探す。
+    // クラス図のカラム（+memberId: String FK）や、組み合わせのラベル（organizationId・memberId）の一部を消さないため
+    const isEdge = !!textEl.closest("g.edgeLabel");
+    const WORD = /[\w぀-鿿・]/;
+    const onEdgeLine = (r) => {
+      const before = code.slice(code.lastIndexOf("\n", r.start - 1) + 1, r.start);
+      return /--|\.\.|->|==|-\./.test(before) && !WORD.test(before.slice(-1)) && !WORD.test(code.charAt(r.end));
+    };
+    let matches = allMatches(labelRegex(lines), code);
+    if (isEdge) matches = matches.filter(onEdgeLine);
     if (!matches.length) return null;
     let pick = null;
     // フローチャートのノードやサブグラフは、IDの直後にあるラベルを優先
@@ -617,7 +626,7 @@ main.collapsed .expand:hover { color: var(--accent); }
       // 同じ文字が複数あるときは、図の中で何番目かに合わせる
       const key = lines.join("\n");
       const seen = new Set(), same = [];
-      for (const t of out.querySelectorAll("svg text")) {
+      for (const t of out.querySelectorAll(isEdge ? "svg g.edgeLabel text" : "svg text")) {
         if (seen.has(t)) continue;
         const g = textGroup(t);
         g.forEach((x) => seen.add(x));
